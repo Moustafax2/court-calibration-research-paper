@@ -1,0 +1,24 @@
+seed: 42
+
+data:
+  project_root: .
+  labels_index: data/labels/labels_index.jsonl
+  train_split: train
+  val_split: val
+  image_height: 512
+  image_width: 512
+  horizontal_flip_prob: 0.5
+
+model:
+  in_channels: 3
+  num_classes: 5
+  base_channels: 32
+
+train:
+  device: cuda
+  batch_size: 8
+  num_workers: 2
+  learning_rate: 0.001
+  weight_decay: 0.0
+  epochs: 20
+  checkpoint_dir: checkpoints/seg
