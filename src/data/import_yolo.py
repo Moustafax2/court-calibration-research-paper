@@ -87,11 +87,12 @@ def _compute_homography_from_keypoints(
 
 
 def import_yolo_keypoints_to_manifest(
-    images_dir: Path,
-    labels_dir: Path,
+    images_dir: Path | None,
+    labels_dir: Path | None,
     manifest_out: Path,
     sport: str,
     split: str,
+    dataset_dir: Path | None = None,
     side: Literal["left", "right", "full"] | None = None,
     side_from_class: str | None = None,
     class_id: int | None = None,
@@ -99,6 +100,18 @@ def import_yolo_keypoints_to_manifest(
     project_root: Path = Path("."),
     append: bool = True,
 ) -> Dict[str, Any]:
+    if dataset_dir is not None:
+        dataset_dir = Path(dataset_dir).resolve()
+        if images_dir is None:
+            images_dir = dataset_dir
+        if labels_dir is None:
+            labels_dir = dataset_dir
+
+    if images_dir is None or labels_dir is None:
+        raise ValueError(
+            "Provide --dataset-dir (single mixed folder) or both --images-dir and --labels-dir."
+        )
+
     images_dir = Path(images_dir).resolve()
     labels_dir = Path(labels_dir).resolve()
     manifest_out = Path(manifest_out).resolve()
@@ -189,6 +202,7 @@ def import_yolo_keypoints_to_manifest(
             f.write(json.dumps(row) + "\n")
 
     return {
+        "dataset_dir": str(dataset_dir) if dataset_dir is not None else None,
         "images_dir": str(images_dir),
         "labels_dir": str(labels_dir),
         "manifest_out": str(manifest_out),

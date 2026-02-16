@@ -166,6 +166,7 @@ def cmd_import_yolo(args: argparse.Namespace) -> int:
         manifest_out=args.manifest_out,
         sport=args.sport,
         split=args.split,
+        dataset_dir=args.dataset_dir,
         side=args.side,
         side_from_class=args.side_from_class,
         class_id=args.class_id,
@@ -395,8 +396,24 @@ def build_parser() -> argparse.ArgumentParser:
         "import-yolo",
         help="Import YOLO keypoint labels and compute homographies into manifest",
     )
-    p_imp.add_argument("--images-dir", type=Path, required=True, help="Directory of frame images.")
-    p_imp.add_argument("--labels-dir", type=Path, required=True, help="Directory of YOLO txt labels.")
+    p_imp.add_argument(
+        "--dataset-dir",
+        type=Path,
+        default=None,
+        help="Single folder containing both images and matching YOLO txt files.",
+    )
+    p_imp.add_argument(
+        "--images-dir",
+        type=Path,
+        default=None,
+        help="Directory of frame images (optional if --dataset-dir is provided).",
+    )
+    p_imp.add_argument(
+        "--labels-dir",
+        type=Path,
+        default=None,
+        help="Directory of YOLO txt labels (optional if --dataset-dir is provided).",
+    )
     p_imp.add_argument("--manifest-out", type=Path, required=True, help="Output JSONL manifest path.")
     p_imp.add_argument(
         "--sport",
