@@ -11,7 +11,7 @@ data:
 
 model:
   in_channels: 3
-  num_classes: 5
+  num_classes: 4
   base_channels: 32
 
 train:

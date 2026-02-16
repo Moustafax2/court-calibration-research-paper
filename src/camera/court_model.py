@@ -12,10 +12,10 @@ from src.camera.sports import get_sport_spec
 
 @dataclass(frozen=True)
 class CourtDimensions:
-    """Court dimensions in feet."""
+    """Court dimensions in canonical court units."""
 
-    length_ft: float = 94.0
-    width_ft: float = 50.0
+    length: float = 28.702
+    width: float = 15.2908
 
 
 @dataclass(frozen=True)
@@ -33,30 +33,27 @@ def build_default_four_region_model(
     """
     Build a 4-region partition of the full court using quadrants.
 
-    Canonical coordinate frame:
-    - x axis: along court length [0, length_ft]
-    - y axis: along court width  [0, width_ft]
-    - origin: top-left corner in top-view layout
+    Canonical coordinate frame (center-origin):
+    - x axis: along court length [-length/2, +length/2]
+    - y axis: along court width  [-width/2, +width/2]
+    - origin: center of court
     """
     dims = dims or CourtDimensions()
-    mid_x = dims.length_ft / 2.0
-    mid_y = dims.width_ft / 2.0
+    half_x = dims.length / 2.0
+    half_y = dims.width / 2.0
 
     polygons: Dict[str, np.ndarray] = {
-        "near_left": np.array([[0, 0], [mid_x, 0], [mid_x, mid_y], [0, mid_y]]),
-        "near_right": np.array(
-            [[0, mid_y], [mid_x, mid_y], [mid_x, dims.width_ft], [0, dims.width_ft]]
+        "left_upper": np.array(
+            [[-half_x, 0.0], [0.0, 0.0], [0.0, half_y], [-half_x, half_y]]
         ),
-        "far_left": np.array(
-            [[mid_x, 0], [dims.length_ft, 0], [dims.length_ft, mid_y], [mid_x, mid_y]]
+        "left_lower": np.array(
+            [[-half_x, -half_y], [0.0, -half_y], [0.0, 0.0], [-half_x, 0.0]]
         ),
-        "far_right": np.array(
-            [
-                [mid_x, mid_y],
-                [dims.length_ft, mid_y],
-                [dims.length_ft, dims.width_ft],
-                [mid_x, dims.width_ft],
-            ]
+        "right_upper": np.array(
+            [[0.0, 0.0], [half_x, 0.0], [half_x, half_y], [0.0, half_y]]
+        ),
+        "right_lower": np.array(
+            [[0.0, -half_y], [half_x, -half_y], [half_x, 0.0], [0.0, 0.0]]
         ),
     }
 
@@ -68,10 +65,101 @@ def build_default_four_region_model(
     return regions
 
 
+def build_basketball_paper_region_model() -> List[CourtRegion]:
+    """
+    Build a paper-aligned 4-region basketball layout in center-origin coordinates.
+
+    Region ids (category-based, mirrored by side):
+    1 = half-court area (both sides)
+    2 = three-point area (both sides)
+    3 = key/paint area (both sides)
+
+    Draw order:
+    - half first
+    - three-point second (overrides half)
+    - key third (overrides three-point/half)
+    """
+    half_x = 14.351
+    half_y = 7.6454
+    key_x = 8.5852
+    key_half_y = 1.8034
+    corner_y = 6.575425
+    hoop_x_left = -12.776
+    hoop_x_right = 12.776
+    arc_r = 6.75
+    arc_n = 48
+
+    # Arc endpoints where the corner-three line meets the arc.
+    # x = cx +/- sqrt(r^2 - y^2), using the side that points to center court.
+    arc_dx = float(np.sqrt(max(1e-8, arc_r**2 - corner_y**2)))
+    left_arc_x = hoop_x_left + arc_dx
+    right_arc_x = hoop_x_right - arc_dx
+
+    y_vals = np.linspace(corner_y, -corner_y, arc_n, dtype=np.float32)
+    left_arc_x_vals = hoop_x_left + np.sqrt(np.maximum(0.0, arc_r**2 - y_vals**2))
+    right_arc_x_vals = hoop_x_right - np.sqrt(np.maximum(0.0, arc_r**2 - y_vals**2))
+
+    left_three_poly = np.vstack(
+        [
+            np.array([[-half_x, half_y], [-half_x, corner_y], [left_arc_x, corner_y]], dtype=np.float32),
+            np.stack([left_arc_x_vals, y_vals], axis=1).astype(np.float32),
+            np.array([[-half_x, -corner_y], [-half_x, -half_y]], dtype=np.float32),
+        ]
+    )
+    right_three_poly = np.vstack(
+        [
+            np.array([[half_x, half_y], [half_x, corner_y], [right_arc_x, corner_y]], dtype=np.float32),
+            np.stack([right_arc_x_vals, y_vals], axis=1).astype(np.float32),
+            np.array([[half_x, -corner_y], [half_x, -half_y]], dtype=np.float32),
+        ]
+    )
+
+    regions: List[CourtRegion] = [
+        CourtRegion(
+            class_id=1,
+            name="left_half",
+            polygon_xy=np.array(
+                [[-half_x, -half_y], [0.0, -half_y], [0.0, half_y], [-half_x, half_y]],
+                dtype=np.float32,
+            ),
+        ),
+        CourtRegion(
+            class_id=1,
+            name="right_half",
+            polygon_xy=np.array(
+                [[0.0, -half_y], [half_x, -half_y], [half_x, half_y], [0.0, half_y]],
+                dtype=np.float32,
+            ),
+        ),
+        CourtRegion(class_id=2, name="left_three_pt", polygon_xy=left_three_poly.astype(np.float32)),
+        CourtRegion(class_id=2, name="right_three_pt", polygon_xy=right_three_poly.astype(np.float32)),
+        CourtRegion(
+            class_id=3,
+            name="left_key",
+            polygon_xy=np.array(
+                [[-half_x, -key_half_y], [-key_x, -key_half_y], [-key_x, key_half_y], [-half_x, key_half_y]],
+                dtype=np.float32,
+            ),
+        ),
+        CourtRegion(
+            class_id=3,
+            name="right_key",
+            polygon_xy=np.array(
+                [[key_x, -key_half_y], [half_x, -key_half_y], [half_x, key_half_y], [key_x, key_half_y]],
+                dtype=np.float32,
+            ),
+        ),
+    ]
+    return regions
+
+
 def build_four_region_model_for_sport(sport: str) -> List[CourtRegion]:
     """Build 4-region model based on a sport's canonical court dimensions."""
     spec = get_sport_spec(sport)
-    dims = CourtDimensions(length_ft=spec.court_size_ft[0], width_ft=spec.court_size_ft[1])
+    if spec.name == "basketball":
+        return build_basketball_paper_region_model()
+
+    dims = CourtDimensions(length=spec.court_size[0], width=spec.court_size[1])
     return build_default_four_region_model(dims=dims)
 
 

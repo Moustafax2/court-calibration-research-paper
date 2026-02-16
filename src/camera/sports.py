@@ -11,18 +11,20 @@ class SportSpec:
     """Sport-specific geometry and semantic settings."""
 
     name: str
-    court_size_ft: Tuple[float, float]  # (length, width)
+    court_size: Tuple[float, float]  # (length, width) in canonical court units
     num_regions: int
 
 
 SPORT_SPECS: Dict[str, SportSpec] = {
     "basketball": SportSpec(
         name="basketball",
-        court_size_ft=(94.0, 50.0),
-        num_regions=4,
+        # Using center-origin metric convention:
+        # x in [-14.351, 14.351], y in [-7.6454, 7.6454]
+        court_size=(28.702, 15.2908),
+        num_regions=3,
     ),
     # Add soccer here later without refactoring pipeline code.
-    # "soccer": SportSpec(name="soccer", court_size_ft=(120.0, 80.0), num_regions=4),
+    # "soccer": SportSpec(name="soccer", court_size=(120.0, 80.0), num_regions=4),
 }
 
 

@@ -98,8 +98,82 @@ def cmd_generate_labels(args: argparse.Namespace) -> int:
         sport=args.sport,
         project_root=args.project_root,
         overwrite=args.overwrite,
+        max_rmse=args.max_rmse,
     )
     print("[generate-labels] summary")
+    for key, value in summary.items():
+        print(f"  {key}: {value}")
+    return 1 if summary["num_errors"] > 0 else 0
+
+
+def cmd_annotate_h(args: argparse.Namespace) -> int:
+    try:
+        from src.data.annotate_homography import annotate_single_frame
+    except ModuleNotFoundError as exc:
+        print(f"[annotate-h] missing dependency: {exc}")
+        print("Install requirements first: pip install -r requirements.txt")
+        return 2
+
+    summary = annotate_single_frame(
+        image_path=args.image,
+        manifest_path=args.manifest,
+        sport=args.sport,
+        side=args.side,
+        split=args.split,
+        video_id=args.video_id,
+        frame_index=args.frame_index,
+        project_root=args.project_root,
+        preview_path=args.preview_out,
+    )
+    print("[annotate-h] saved")
+    for key, value in summary.items():
+        print(f"  {key}: {value}")
+    return 0
+
+
+def cmd_visualize_label(args: argparse.Namespace) -> int:
+    try:
+        from src.data.visualize_labels import visualize_label_overlay
+    except ModuleNotFoundError as exc:
+        print(f"[visualize-label] missing dependency: {exc}")
+        print("Install requirements first: pip install -r requirements.txt")
+        return 2
+
+    summary = visualize_label_overlay(
+        frame_path=args.frame,
+        mask_path=args.mask,
+        output_path=args.output,
+        alpha=args.alpha,
+        draw_center_line=not args.no_center_line,
+    )
+    print("[visualize-label] saved")
+    for key, value in summary.items():
+        print(f"  {key}: {value}")
+    return 0
+
+
+def cmd_import_yolo(args: argparse.Namespace) -> int:
+    try:
+        from src.data.import_yolo import import_yolo_keypoints_to_manifest
+    except ModuleNotFoundError as exc:
+        print(f"[import-yolo] missing dependency: {exc}")
+        print("Install requirements first: pip install -r requirements.txt")
+        return 2
+
+    summary = import_yolo_keypoints_to_manifest(
+        images_dir=args.images_dir,
+        labels_dir=args.labels_dir,
+        manifest_out=args.manifest_out,
+        sport=args.sport,
+        split=args.split,
+        side=args.side,
+        side_from_class=args.side_from_class,
+        class_id=args.class_id,
+        visibility_threshold=args.visibility_threshold,
+        project_root=args.project_root,
+        append=not args.overwrite_manifest,
+    )
+    print("[import-yolo] summary")
     for key, value in summary.items():
         print(f"  {key}: {value}")
     return 1 if summary["num_errors"] > 0 else 0
@@ -221,7 +295,160 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Overwrite existing masks.",
     )
+    p_gen.add_argument(
+        "--max-rmse",
+        type=float,
+        default=None,
+        help="Optional max reprojection RMSE (pixels) to keep a row.",
+    )
     p_gen.set_defaults(func=cmd_generate_labels)
+
+    p_annot = subparsers.add_parser(
+        "annotate-h",
+        help="Interactively annotate frame correspondences and append homography row",
+    )
+    p_annot.add_argument(
+        "--image",
+        type=Path,
+        required=True,
+        help="Frame image path to annotate.",
+    )
+    p_annot.add_argument(
+        "--manifest",
+        type=Path,
+        required=True,
+        help="JSONL manifest to append to.",
+    )
+    p_annot.add_argument(
+        "--sport",
+        type=str,
+        default="basketball",
+        choices=supported_sports(),
+        help="Sport mode.",
+    )
+    p_annot.add_argument(
+        "--split",
+        type=str,
+        default="train",
+        choices=["train", "val", "test"],
+        help="Split label for this annotation row.",
+    )
+    p_annot.add_argument(
+        "--side",
+        type=str,
+        default="left",
+        choices=["left", "right", "full"],
+        help="Basketball reference-point template side.",
+    )
+    p_annot.add_argument(
+        "--video-id",
+        type=str,
+        default=None,
+        help="Optional video identifier.",
+    )
+    p_annot.add_argument(
+        "--frame-index",
+        type=int,
+        default=None,
+        help="Optional frame index from source video.",
+    )
+    p_annot.add_argument(
+        "--project-root",
+        type=Path,
+        default=Path("."),
+        help="Project root used to resolve relative image/manifest paths.",
+    )
+    p_annot.add_argument(
+        "--preview-out",
+        type=Path,
+        default=Path("outputs/annotation_preview.jpg"),
+        help="Optional path to save projected court preview image.",
+    )
+    p_annot.set_defaults(func=cmd_annotate_h)
+
+    p_vis = subparsers.add_parser(
+        "visualize-label",
+        help="Overlay semantic label mask on a frame with legend",
+    )
+    p_vis.add_argument("--frame", type=Path, required=True, help="Input frame image path.")
+    p_vis.add_argument("--mask", type=Path, required=True, help="Input mask image path.")
+    p_vis.add_argument(
+        "--output",
+        type=Path,
+        default=Path("outputs/label_overlay.jpg"),
+        help="Output visualization image path.",
+    )
+    p_vis.add_argument(
+        "--alpha",
+        type=float,
+        default=0.45,
+        help="Overlay alpha in [0,1].",
+    )
+    p_vis.add_argument(
+        "--no-center-line",
+        action="store_true",
+        help="Disable center divider line.",
+    )
+    p_vis.set_defaults(func=cmd_visualize_label)
+
+    p_imp = subparsers.add_parser(
+        "import-yolo",
+        help="Import YOLO keypoint labels and compute homographies into manifest",
+    )
+    p_imp.add_argument("--images-dir", type=Path, required=True, help="Directory of frame images.")
+    p_imp.add_argument("--labels-dir", type=Path, required=True, help="Directory of YOLO txt labels.")
+    p_imp.add_argument("--manifest-out", type=Path, required=True, help="Output JSONL manifest path.")
+    p_imp.add_argument(
+        "--sport",
+        type=str,
+        default="basketball",
+        choices=supported_sports(),
+        help="Sport mode.",
+    )
+    p_imp.add_argument(
+        "--split",
+        type=str,
+        default="train",
+        choices=["train", "val", "test"],
+        help="Split label for imported rows.",
+    )
+    p_imp.add_argument(
+        "--side",
+        type=str,
+        default=None,
+        choices=["left", "right", "full"],
+        help="Force side for all rows. If omitted, use --side-from-class or default left.",
+    )
+    p_imp.add_argument(
+        "--side-from-class",
+        type=str,
+        default=None,
+        help="Class-to-side mapping, e.g. '0:left,1:right'.",
+    )
+    p_imp.add_argument(
+        "--class-id",
+        type=int,
+        default=None,
+        help="If set, only import objects with this class id from each txt line set.",
+    )
+    p_imp.add_argument(
+        "--visibility-threshold",
+        type=float,
+        default=0.5,
+        help="Minimum YOLO keypoint visibility to use a point.",
+    )
+    p_imp.add_argument(
+        "--project-root",
+        type=Path,
+        default=Path("."),
+        help="Root used to store relative frame paths in manifest.",
+    )
+    p_imp.add_argument(
+        "--overwrite-manifest",
+        action="store_true",
+        help="Overwrite manifest instead of appending.",
+    )
+    p_imp.set_defaults(func=cmd_import_yolo)
 
     return parser
 

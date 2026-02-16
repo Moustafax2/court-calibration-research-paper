@@ -9,6 +9,7 @@ from typing import Any, Mapping
 import numpy as np
 
 VALID_SPLITS = {"train", "val", "test"}
+VALID_SIDES = {"left", "right", "full"}
 
 
 @dataclass(frozen=True)
@@ -20,6 +21,7 @@ class FrameAnnotation:
     split: str
     video_id: str | None = None
     frame_index: int | None = None
+    side: str | None = None
 
     @staticmethod
     def from_dict(data: Mapping[str, Any]) -> "FrameAnnotation":
@@ -48,10 +50,16 @@ class FrameAnnotation:
         if frame_index is not None and not isinstance(frame_index, int):
             raise ValueError("frame_index must be an integer when provided.")
 
+        side = data.get("side")
+        if side is not None:
+            if not isinstance(side, str) or side not in VALID_SIDES:
+                raise ValueError(f"side must be one of {sorted(VALID_SIDES)} when provided.")
+
         return FrameAnnotation(
             frame_path=Path(frame_path_raw),
             homography_image_from_court=h,
             split=split,
             video_id=video_id,
             frame_index=frame_index,
+            side=side,
         )
