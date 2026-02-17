@@ -24,8 +24,17 @@ def cmd_train_seg(args: argparse.Namespace) -> int:
 
 
 def cmd_train_pose(args: argparse.Namespace) -> int:
-    print(f"[train-pose] config={args.config}")
-    print("Not implemented yet.")
+    try:
+        from src.train.train_pose import train_pose
+    except ModuleNotFoundError as exc:
+        print(f"[train-pose] missing dependency: {exc}")
+        print("Install requirements first: pip install -r requirements.txt")
+        return 2
+
+    summary = train_pose(args.config)
+    print("[train-pose] completed")
+    for key, value in summary.items():
+        print(f"  {key}: {value}")
     return 0
 
 

@@ -1,0 +1,18 @@
+seed: 42
+
+data:
+  project_root: .
+  manifest: data/annotations.jsonl
+  sport: basketball
+  split: train
+
+pose:
+  template_width: 960
+  template_height: 540
+  min_components: 50
+  max_components: 260
+  step: 10
+  posterior_threshold: 0.6
+
+output:
+  dir: checkpoints/pose
