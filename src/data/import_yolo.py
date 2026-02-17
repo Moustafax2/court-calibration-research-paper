@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import random
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Literal, Tuple
 
@@ -97,6 +98,8 @@ def import_yolo_keypoints_to_manifest(
     side_from_class: str | None = None,
     class_id: int | None = None,
     visibility_threshold: float = 0.5,
+    val_ratio: float = 0.2,
+    split_seed: int = 42,
     project_root: Path = Path("."),
     append: bool = True,
 ) -> Dict[str, Any]:
@@ -184,7 +187,7 @@ def import_yolo_keypoints_to_manifest(
         row = {
             "frame_path": frame_rel,
             "homography": h_mat.tolist(),
-            "split": split,
+            "split": "train" if split == "auto" else split,
             "side": side_row,
             "video_id": image_path.parent.name,
             "frame_index": None,
@@ -195,6 +198,25 @@ def import_yolo_keypoints_to_manifest(
         }
         rows.append(row)
         imported += 1
+
+    split_counts = {"train": 0, "val": 0, "test": 0}
+    if split == "auto":
+        if not (0.0 < float(val_ratio) < 1.0):
+            raise ValueError("--val-ratio must be in (0, 1) when split=auto.")
+        rng = random.Random(int(split_seed))
+        indices = list(range(len(rows)))
+        rng.shuffle(indices)
+        val_count = int(round(len(indices) * float(val_ratio)))
+        if len(indices) > 1:
+            val_count = max(1, min(len(indices) - 1, val_count))
+        val_set = set(indices[:val_count])
+        for i, row in enumerate(rows):
+            row["split"] = "val" if i in val_set else "train"
+
+    for row in rows:
+        sp = row.get("split", "train")
+        if sp in split_counts:
+            split_counts[sp] += 1
 
     mode = "a" if append else "w"
     with manifest_out.open(mode, encoding="utf-8") as f:
@@ -208,6 +230,8 @@ def import_yolo_keypoints_to_manifest(
         "manifest_out": str(manifest_out),
         "imported": imported,
         "skipped": skipped,
+        "split_mode": split,
+        "split_counts": split_counts,
         "num_errors": len(errors),
         "first_errors": errors[:20],
     }

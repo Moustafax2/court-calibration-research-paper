@@ -22,7 +22,7 @@ python main.py import-yolo \
   --dataset-dir data/external/yolo/mixed \
   --manifest-out data/annotations.jsonl \
   --sport basketball \
-  --split train \
+  --split auto \
   --side-from-class "0:left,1:right"
 ```
 
@@ -39,6 +39,7 @@ python main.py import-yolo \
 ```
 
 If all labels use one side, force it with `--side left` or `--side right`.
+Default split is already `auto` (80/20 train/val). You can omit `--split`.
 
 Notes:
 - YOLO `class_id` is optional for geometry. It is only used for `--side-from-class` mapping or `--class-id` filtering.

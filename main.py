@@ -171,6 +171,8 @@ def cmd_import_yolo(args: argparse.Namespace) -> int:
         side_from_class=args.side_from_class,
         class_id=args.class_id,
         visibility_threshold=args.visibility_threshold,
+        val_ratio=args.val_ratio,
+        split_seed=args.split_seed,
         project_root=args.project_root,
         append=not args.overwrite_manifest,
     )
@@ -425,9 +427,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_imp.add_argument(
         "--split",
         type=str,
-        default="train",
-        choices=["train", "val", "test"],
-        help="Split label for imported rows.",
+        default="auto",
+        choices=["auto", "train", "val", "test"],
+        help="Split mode. 'auto' creates train/val split.",
     )
     p_imp.add_argument(
         "--side",
@@ -453,6 +455,18 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=0.5,
         help="Minimum YOLO keypoint visibility to use a point.",
+    )
+    p_imp.add_argument(
+        "--val-ratio",
+        type=float,
+        default=0.2,
+        help="Validation ratio when --split auto.",
+    )
+    p_imp.add_argument(
+        "--split-seed",
+        type=int,
+        default=42,
+        help="Random seed for auto split shuffling.",
     )
     p_imp.add_argument(
         "--project-root",
