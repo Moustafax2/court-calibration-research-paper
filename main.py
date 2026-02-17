@@ -44,6 +44,21 @@ def cmd_train_stn(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_train_retrieval(args: argparse.Namespace) -> int:
+    try:
+        from src.train.train_retrieval import train_retrieval
+    except ModuleNotFoundError as exc:
+        print(f"[train-retrieval] missing dependency: {exc}")
+        print("Install requirements first: pip install -r requirements.txt")
+        return 2
+
+    summary = train_retrieval(args.config)
+    print("[train-retrieval] completed")
+    for key, value in summary.items():
+        print(f"  {key}: {value}")
+    return 0
+
+
 def cmd_train_e2e(args: argparse.Namespace) -> int:
     print(f"[train-e2e] config={args.config}")
     print("Not implemented yet.")
@@ -69,6 +84,8 @@ def cmd_infer_video(args: argparse.Namespace) -> int:
         output_path=args.output,
         sport=args.sport,
         ckpt=args.ckpt,
+        retrieval_ckpt=args.retrieval_ckpt,
+        templates_dir=args.templates_dir,
         overlay_alpha=args.overlay_alpha,
         device=args.device,
         max_frames=args.max_frames,
@@ -220,6 +237,12 @@ def build_parser() -> argparse.ArgumentParser:
     _add_common_config_arg(p_train_stn)
     p_train_stn.set_defaults(func=cmd_train_stn)
 
+    p_train_retrieval = subparsers.add_parser(
+        "train-retrieval", help="Train siamese template retrieval model"
+    )
+    _add_common_config_arg(p_train_retrieval)
+    p_train_retrieval.set_defaults(func=cmd_train_retrieval)
+
     p_train_e2e = subparsers.add_parser("train-e2e", help="Train full end-to-end model")
     _add_common_config_arg(p_train_e2e)
     p_train_e2e.set_defaults(func=cmd_train_e2e)
@@ -236,7 +259,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--ckpt",
         type=Path,
         default=None,
-        help="Checkpoint path.",
+        help="Segmentation checkpoint path.",
+    )
+    p_infer.add_argument(
+        "--retrieval-ckpt",
+        type=Path,
+        default=None,
+        help="Retrieval checkpoint path (optional).",
+    )
+    p_infer.add_argument(
+        "--templates-dir",
+        type=Path,
+        default=None,
+        help="Pose template directory (optional, required for retrieval).",
     )
     p_infer.add_argument(
         "--sport",

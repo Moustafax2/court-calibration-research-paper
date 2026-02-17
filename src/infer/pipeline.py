@@ -56,9 +56,12 @@ class SegmentationFrameProcessor(FrameProcessor):
         ckpt_path: Path,
         overlay_alpha: float = 0.45,
         device: str | None = None,
+        retrieval_ckpt_path: Path | None = None,
+        templates_dir: Path | None = None,
     ) -> None:
         import torch
         from src.models.unet_segmentation import UNetSegmentation
+        from src.models.siamese_pose import SiameseRetrievalModel
 
         self._torch = torch
         self.overlay_alpha = float(np.clip(overlay_alpha, 0.0, 1.0))
@@ -86,6 +89,37 @@ class SegmentationFrameProcessor(FrameProcessor):
             device = "cpu"
         self.device = torch.device(device)
         self.model.to(self.device)
+        self.model.eval()
+
+        # Optional retrieval branch.
+        self.retrieval_enabled = False
+        self.retrieval_model = None
+        self.template_ids: list[int] = []
+        self.template_embeddings = None
+        self.template_embed_dim = None
+        self.templates_dir = templates_dir
+        if retrieval_ckpt_path is not None and templates_dir is not None:
+            retrieval_ckpt_path = Path(retrieval_ckpt_path)
+            templates_dir = Path(templates_dir)
+            if retrieval_ckpt_path.exists() and templates_dir.exists():
+                r_ckpt = torch.load(str(retrieval_ckpt_path), map_location="cpu")
+                r_cfg = r_ckpt.get("config", {})
+                r_model_cfg = r_cfg.get("model", {})
+                self.retrieval_model = SiameseRetrievalModel(
+                    in_channels=int(r_model_cfg.get("in_channels", 1)),
+                    embedding_dim=int(r_model_cfg.get("embedding_dim", 128)),
+                    base_channels=int(r_model_cfg.get("base_channels", 32)),
+                ).to(self.device)
+                self.retrieval_model.load_state_dict(r_ckpt["model_state_dict"])
+                self.retrieval_model.eval()
+
+                self.template_ids = sorted(
+                    int(p.stem.split("_")[-1]) for p in templates_dir.glob("template_*.png")
+                )
+                if self.template_ids:
+                    self.template_embeddings = self._precompute_template_embeddings()
+                    self.template_embed_dim = int(self.template_embeddings.shape[1])
+                    self.retrieval_enabled = True
 
     def _predict_mask(self, frame_bgr: np.ndarray) -> np.ndarray:
         torch = self._torch
@@ -101,6 +135,44 @@ class SegmentationFrameProcessor(FrameProcessor):
 
         mask = cv2.resize(pred, (frame_bgr.shape[1], frame_bgr.shape[0]), interpolation=cv2.INTER_NEAREST)
         return mask
+
+    def _normalize_mask_for_retrieval(self, mask: np.ndarray) -> np.ndarray:
+        m = mask.astype(np.float32)
+        denom = max(1.0, float(np.max(m)))
+        return m / denom
+
+    def _embed_mask(self, mask: np.ndarray) -> np.ndarray:
+        torch = self._torch
+        if self.retrieval_model is None:
+            raise RuntimeError("Retrieval model is not initialized.")
+        h, w = self.input_h, self.input_w
+        resized = cv2.resize(mask, (w, h), interpolation=cv2.INTER_NEAREST)
+        x = self._normalize_mask_for_retrieval(resized)[None, None, ...]  # NCHW
+        x_t = torch.from_numpy(x).float().to(self.device)
+        with torch.no_grad():
+            emb = self.retrieval_model.encoder(x_t).cpu().numpy()
+        return emb[0]
+
+    def _precompute_template_embeddings(self) -> np.ndarray:
+        embs = []
+        for tid in self.template_ids:
+            p = Path(self.templates_dir) / f"template_{tid:04d}.png"
+            mask = cv2.imread(str(p), cv2.IMREAD_UNCHANGED)
+            if mask is None:
+                continue
+            if mask.ndim == 3:
+                mask = mask[..., 0]
+            embs.append(self._embed_mask(mask))
+        if not embs:
+            raise RuntimeError("No valid template embeddings could be computed.")
+        return np.asarray(embs, dtype=np.float32)
+
+    def _retrieve_template(self, mask: np.ndarray) -> tuple[int, float]:
+        q = self._embed_mask(mask).astype(np.float32)[None, :]
+        diffs = self.template_embeddings - q
+        dists = np.linalg.norm(diffs, axis=1)
+        idx = int(np.argmin(dists))
+        return int(self.template_ids[idx]), float(dists[idx])
 
     def _colorize(self, mask: np.ndarray) -> np.ndarray:
         h, w = mask.shape[:2]
@@ -142,11 +214,24 @@ class SegmentationFrameProcessor(FrameProcessor):
             1,
             cv2.LINE_AA,
         )
-        unique_vals = ",".join(str(int(v)) for v in np.unique(mask))
-        return FrameProcessorResult(
-            frame_out=out,
-            metadata={"mode": "segmentation", "classes": unique_vals},
-        )
+        metadata = {"mode": "segmentation", "classes": ",".join(str(int(v)) for v in np.unique(mask))}
+
+        if self.retrieval_enabled:
+            template_id, dist = self._retrieve_template(mask)
+            cv2.putText(
+                out,
+                f"template={template_id} dist={dist:.3f}",
+                (20, out.shape[0] - 45),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                (255, 255, 255),
+                1,
+                cv2.LINE_AA,
+            )
+            metadata["mode"] = "segmentation+retrieval"
+            metadata["template_id"] = str(template_id)
+            metadata["template_dist"] = f"{dist:.6f}"
+        return FrameProcessorResult(frame_out=out, metadata=metadata)
 
 
 def build_frame_processor(
@@ -154,6 +239,8 @@ def build_frame_processor(
     ckpt: Path | None,
     overlay_alpha: float = 0.45,
     device: str | None = None,
+    retrieval_ckpt: Path | None = None,
+    templates_dir: Path | None = None,
 ) -> Tuple[SportSpec, FrameProcessor]:
     """Build a sport-specific frame processor."""
     spec = get_sport_spec(sport)
@@ -165,4 +252,6 @@ def build_frame_processor(
         ckpt_path=Path(ckpt),
         overlay_alpha=overlay_alpha,
         device=device,
+        retrieval_ckpt_path=retrieval_ckpt,
+        templates_dir=templates_dir,
     )

@@ -14,6 +14,8 @@ def run_video_pipeline(
     output_path: Path,
     sport: str,
     ckpt: Path | None = None,
+    retrieval_ckpt: Path | None = None,
+    templates_dir: Path | None = None,
     overlay_alpha: float = 0.45,
     device: str | None = None,
     max_frames: int | None = None,
@@ -22,6 +24,8 @@ def run_video_pipeline(
     spec, processor = build_frame_processor(
         sport=sport,
         ckpt=ckpt,
+        retrieval_ckpt=retrieval_ckpt,
+        templates_dir=templates_dir,
         overlay_alpha=overlay_alpha,
         device=device,
     )
