@@ -39,8 +39,17 @@ def cmd_train_pose(args: argparse.Namespace) -> int:
 
 
 def cmd_train_stn(args: argparse.Namespace) -> int:
-    print(f"[train-stn] config={args.config}")
-    print("Not implemented yet.")
+    try:
+        from src.train.train_stn import train_stn
+    except ModuleNotFoundError as exc:
+        print(f"[train-stn] missing dependency: {exc}")
+        print("Install requirements first: pip install -r requirements.txt")
+        return 2
+
+    summary = train_stn(args.config)
+    print("[train-stn] completed")
+    for key, value in summary.items():
+        print(f"  {key}: {value}")
     return 0
 
 
@@ -86,6 +95,8 @@ def cmd_infer_video(args: argparse.Namespace) -> int:
         ckpt=args.ckpt,
         retrieval_ckpt=args.retrieval_ckpt,
         templates_dir=args.templates_dir,
+        stn_ckpt=args.stn_ckpt,
+        template_homographies=args.template_homographies,
         overlay_alpha=args.overlay_alpha,
         device=args.device,
         max_frames=args.max_frames,
@@ -272,6 +283,18 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="Pose template directory (optional, required for retrieval).",
+    )
+    p_infer.add_argument(
+        "--stn-ckpt",
+        type=Path,
+        default=None,
+        help="STN checkpoint path (optional, requires retrieval + template homographies).",
+    )
+    p_infer.add_argument(
+        "--template-homographies",
+        type=Path,
+        default=None,
+        help="Path to template_homographies.json (optional, used by STN refinement).",
     )
     p_infer.add_argument(
         "--sport",

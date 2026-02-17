@@ -1,0 +1,26 @@
+seed: 42
+
+data:
+  project_root: .
+  labels_index: data/labels/labels_index.jsonl
+  assignments: checkpoints/pose/template_assignments.jsonl
+  manifest: data/annotations.jsonl
+  templates_dir: checkpoints/pose/templates
+  template_homographies: checkpoints/pose/template_homographies.json
+  train_split: train
+  val_split: val
+  image_height: 256
+  image_width: 256
+
+model:
+  in_channels: 2
+  base_channels: 32
+
+train:
+  device: cuda
+  batch_size: 32
+  num_workers: 2
+  learning_rate: 0.001
+  weight_decay: 0.0
+  epochs: 20
+  checkpoint_dir: checkpoints/stn

@@ -16,6 +16,8 @@ def run_video_pipeline(
     ckpt: Path | None = None,
     retrieval_ckpt: Path | None = None,
     templates_dir: Path | None = None,
+    stn_ckpt: Path | None = None,
+    template_homographies: Path | None = None,
     overlay_alpha: float = 0.45,
     device: str | None = None,
     max_frames: int | None = None,
@@ -26,6 +28,8 @@ def run_video_pipeline(
         ckpt=ckpt,
         retrieval_ckpt=retrieval_ckpt,
         templates_dir=templates_dir,
+        stn_ckpt=stn_ckpt,
+        template_homographies_path=template_homographies,
         overlay_alpha=overlay_alpha,
         device=device,
     )

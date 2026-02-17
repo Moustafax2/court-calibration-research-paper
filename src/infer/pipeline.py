@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from pathlib import Path
 from typing import Dict, Tuple
 
@@ -58,13 +59,20 @@ class SegmentationFrameProcessor(FrameProcessor):
         device: str | None = None,
         retrieval_ckpt_path: Path | None = None,
         templates_dir: Path | None = None,
+        stn_ckpt_path: Path | None = None,
+        template_homographies_path: Path | None = None,
+        sport: str = "basketball",
     ) -> None:
         import torch
+        from src.camera.pose_dictionary import pose_vector_to_homography
+        from src.models.stn_homography import STNHomographyRegressor
         from src.models.unet_segmentation import UNetSegmentation
         from src.models.siamese_pose import SiameseRetrievalModel
 
         self._torch = torch
+        self._pose_vector_to_h = pose_vector_to_homography
         self.overlay_alpha = float(np.clip(overlay_alpha, 0.0, 1.0))
+        self.sport = sport
 
         checkpoint = torch.load(str(ckpt_path), map_location="cpu")
         cfg = checkpoint.get("config", {})
@@ -121,6 +129,38 @@ class SegmentationFrameProcessor(FrameProcessor):
                     self.template_embed_dim = int(self.template_embeddings.shape[1])
                     self.retrieval_enabled = True
 
+        # Optional STN refinement branch.
+        self.stn_enabled = False
+        self.stn_model = None
+        self.stn_input_h = self.input_h
+        self.stn_input_w = self.input_w
+        self.template_homographies = None
+        if (
+            stn_ckpt_path is not None
+            and template_homographies_path is not None
+            and self.retrieval_enabled
+        ):
+            stn_ckpt_path = Path(stn_ckpt_path)
+            template_homographies_path = Path(template_homographies_path)
+            if stn_ckpt_path.exists() and template_homographies_path.exists():
+                s_ckpt = torch.load(str(stn_ckpt_path), map_location="cpu")
+                s_cfg = s_ckpt.get("config", {})
+                s_model_cfg = s_cfg.get("model", {})
+                s_data_cfg = s_cfg.get("data", {})
+                self.stn_input_h = int(s_data_cfg.get("image_height", self.input_h))
+                self.stn_input_w = int(s_data_cfg.get("image_width", self.input_w))
+                self.stn_model = STNHomographyRegressor(
+                    in_channels=int(s_model_cfg.get("in_channels", 2)),
+                    base_channels=int(s_model_cfg.get("base_channels", 32)),
+                ).to(self.device)
+                self.stn_model.load_state_dict(s_ckpt["model_state_dict"])
+                self.stn_model.eval()
+
+                with template_homographies_path.open("r", encoding="utf-8") as f:
+                    mats = json.load(f)
+                self.template_homographies = [np.asarray(m, dtype=np.float64) for m in mats]
+                self.stn_enabled = True
+
     def _predict_mask(self, frame_bgr: np.ndarray) -> np.ndarray:
         torch = self._torch
         rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
@@ -173,6 +213,38 @@ class SegmentationFrameProcessor(FrameProcessor):
         dists = np.linalg.norm(diffs, axis=1)
         idx = int(np.argmin(dists))
         return int(self.template_ids[idx]), float(dists[idx])
+
+    def _predict_relative_h(self, mask_pred: np.ndarray, template_id: int) -> np.ndarray:
+        torch = self._torch
+        if self.stn_model is None:
+            raise RuntimeError("STN model is not initialized.")
+        tp = Path(self.templates_dir) / f"template_{template_id:04d}.png"
+        tmask = cv2.imread(str(tp), cv2.IMREAD_UNCHANGED)
+        if tmask is None:
+            raise FileNotFoundError(f"Template mask missing: {tp}")
+        if tmask.ndim == 3:
+            tmask = tmask[..., 0]
+
+        a = cv2.resize(mask_pred, (self.stn_input_w, self.stn_input_h), interpolation=cv2.INTER_NEAREST).astype(np.float32)
+        b = cv2.resize(tmask, (self.stn_input_w, self.stn_input_h), interpolation=cv2.INTER_NEAREST).astype(np.float32)
+        a /= max(1.0, float(np.max(a)))
+        b /= max(1.0, float(np.max(b)))
+        x = np.stack([a, b], axis=0)[None, ...]  # NCHW
+        x_t = torch.from_numpy(x).float().to(self.device)
+        with torch.no_grad():
+            rel_vec = self.stn_model(x_t).squeeze(0).cpu().numpy()
+        return self._pose_vector_to_h(rel_vec)
+
+    def _draw_court_outline(self, image: np.ndarray, h_final: np.ndarray) -> None:
+        # Center-origin basketball dimensions.
+        half_x, half_y = 14.351, 7.6454
+        outline = np.array(
+            [[-half_x, half_y], [half_x, half_y], [half_x, -half_y], [-half_x, -half_y]],
+            dtype=np.float32,
+        ).reshape(-1, 1, 2)
+        warped = cv2.perspectiveTransform(outline, h_final).reshape(-1, 2)
+        pts = np.round(warped).astype(np.int32)
+        cv2.polylines(image, [pts], isClosed=True, color=(255, 255, 0), thickness=2)
 
     def _colorize(self, mask: np.ndarray) -> np.ndarray:
         h, w = mask.shape[:2]
@@ -231,6 +303,14 @@ class SegmentationFrameProcessor(FrameProcessor):
             metadata["mode"] = "segmentation+retrieval"
             metadata["template_id"] = str(template_id)
             metadata["template_dist"] = f"{dist:.6f}"
+
+            if self.stn_enabled and self.template_homographies is not None:
+                if 0 <= template_id < len(self.template_homographies):
+                    h_template = self.template_homographies[template_id]
+                    h_rel = self._predict_relative_h(mask, template_id)
+                    h_final = h_rel @ h_template
+                    self._draw_court_outline(out, h_final)
+                    metadata["mode"] = "segmentation+retrieval+stn"
         return FrameProcessorResult(frame_out=out, metadata=metadata)
 
 
@@ -241,6 +321,8 @@ def build_frame_processor(
     device: str | None = None,
     retrieval_ckpt: Path | None = None,
     templates_dir: Path | None = None,
+    stn_ckpt: Path | None = None,
+    template_homographies_path: Path | None = None,
 ) -> Tuple[SportSpec, FrameProcessor]:
     """Build a sport-specific frame processor."""
     spec = get_sport_spec(sport)
@@ -254,4 +336,7 @@ def build_frame_processor(
         device=device,
         retrieval_ckpt_path=retrieval_ckpt,
         templates_dir=templates_dir,
+        stn_ckpt_path=stn_ckpt,
+        template_homographies_path=template_homographies_path,
+        sport=sport,
     )
