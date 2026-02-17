@@ -14,10 +14,17 @@ def run_video_pipeline(
     output_path: Path,
     sport: str,
     ckpt: Path | None = None,
+    overlay_alpha: float = 0.45,
+    device: str | None = None,
     max_frames: int | None = None,
 ) -> dict:
     """Run the video pipeline with the currently configured frame processor."""
-    spec, processor = build_frame_processor(sport=sport, ckpt=ckpt)
+    spec, processor = build_frame_processor(
+        sport=sport,
+        ckpt=ckpt,
+        overlay_alpha=overlay_alpha,
+        device=device,
+    )
 
     cap = cv2.VideoCapture(str(input_path))
     if not cap.isOpened():

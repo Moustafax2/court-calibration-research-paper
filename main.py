@@ -60,6 +60,8 @@ def cmd_infer_video(args: argparse.Namespace) -> int:
         output_path=args.output,
         sport=args.sport,
         ckpt=args.ckpt,
+        overlay_alpha=args.overlay_alpha,
+        device=args.device,
         max_frames=args.max_frames,
     )
     print("[infer-video] completed")
@@ -239,6 +241,19 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="Optional cap for processed frames.",
+    )
+    p_infer.add_argument(
+        "--overlay-alpha",
+        type=float,
+        default=0.45,
+        help="Overlay alpha used for segmentation visualization.",
+    )
+    p_infer.add_argument(
+        "--device",
+        type=str,
+        default=None,
+        choices=["cpu", "cuda"],
+        help="Inference device override. Default auto-select.",
     )
     p_infer.set_defaults(func=cmd_infer_video)
 
