@@ -97,6 +97,7 @@ def cmd_infer_video(args: argparse.Namespace) -> int:
         templates_dir=args.templates_dir,
         stn_ckpt=args.stn_ckpt,
         template_homographies=args.template_homographies,
+        debug_retrieval=args.debug_retrieval,
         overlay_alpha=args.overlay_alpha,
         device=args.device,
         max_frames=args.max_frames,
@@ -295,6 +296,11 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="Path to template_homographies.json (optional, used by STN refinement).",
+    )
+    p_infer.add_argument(
+        "--debug-retrieval",
+        action="store_true",
+        help="Draw retrieval debug panels (pred mask, matched template, top-k distances).",
     )
     p_infer.add_argument(
         "--sport",

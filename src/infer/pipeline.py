@@ -62,6 +62,7 @@ class SegmentationFrameProcessor(FrameProcessor):
         stn_ckpt_path: Path | None = None,
         template_homographies_path: Path | None = None,
         sport: str = "basketball",
+        debug_retrieval: bool = False,
     ) -> None:
         import torch
         from src.camera.pose_dictionary import pose_vector_to_homography
@@ -73,6 +74,7 @@ class SegmentationFrameProcessor(FrameProcessor):
         self._pose_vector_to_h = pose_vector_to_homography
         self.overlay_alpha = float(np.clip(overlay_alpha, 0.0, 1.0))
         self.sport = sport
+        self.debug_retrieval = debug_retrieval
 
         checkpoint = torch.load(str(ckpt_path), map_location="cpu")
         cfg = checkpoint.get("config", {})
@@ -221,6 +223,14 @@ class SegmentationFrameProcessor(FrameProcessor):
         idx = int(np.argmin(dists))
         return int(self.template_ids[idx]), float(dists[idx])
 
+    def _retrieve_topk(self, mask: np.ndarray, k: int = 3) -> list[tuple[int, float]]:
+        q = self._embed_mask(mask).astype(np.float32)[None, :]
+        diffs = self.template_embeddings - q
+        dists = np.linalg.norm(diffs, axis=1)
+        k = max(1, min(k, len(dists)))
+        order = np.argsort(dists)[:k]
+        return [(int(self.template_ids[int(i)]), float(dists[int(i)])) for i in order]
+
     def _predict_relative_h(self, mask_pred: np.ndarray, template_id: int) -> np.ndarray:
         torch = self._torch
         if self.stn_model is None:
@@ -298,6 +308,33 @@ class SegmentationFrameProcessor(FrameProcessor):
             yy += box_h + pad_y
         return canvas
 
+    def _draw_debug_mask_panel(
+        self,
+        image: np.ndarray,
+        mask: np.ndarray,
+        title: str,
+        top_left: tuple[int, int],
+        size: tuple[int, int] = (220, 140),
+    ) -> None:
+        x0, y0 = top_left
+        w, h = size
+        if x0 + w >= image.shape[1] or y0 + h >= image.shape[0]:
+            return
+        m = cv2.resize(mask, (w, h), interpolation=cv2.INTER_NEAREST)
+        cm = self._colorize(m)
+        image[y0 : y0 + h, x0 : x0 + w] = cm
+        cv2.rectangle(image, (x0, y0), (x0 + w, y0 + h), (255, 255, 255), 1)
+        cv2.putText(
+            image,
+            title,
+            (x0 + 6, y0 + 18),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (255, 255, 255),
+            1,
+            cv2.LINE_AA,
+        )
+
     def process(self, frame: np.ndarray, frame_idx: int) -> FrameProcessorResult:
         mask = self._predict_mask(frame)
         color_mask = self._colorize(mask)
@@ -331,6 +368,40 @@ class SegmentationFrameProcessor(FrameProcessor):
             metadata["template_id"] = str(template_id)
             metadata["template_dist"] = f"{dist:.6f}"
 
+            if self.debug_retrieval:
+                topk = self._retrieve_topk(mask, k=3)
+                lines = [f"top{k+1}: id={tid} d={d:.3f}" for k, (tid, d) in enumerate(topk)]
+                y_txt = out.shape[0] - 70
+                for line in lines:
+                    cv2.putText(
+                        out,
+                        line,
+                        (20, y_txt),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.55,
+                        (255, 255, 255),
+                        1,
+                        cv2.LINE_AA,
+                    )
+                    y_txt -= 20
+
+                # Show predicted mask and best-matched template mask.
+                self._draw_debug_mask_panel(
+                    out, mask, "pred_mask", top_left=(out.shape[1] - 460, 20), size=(220, 140)
+                )
+                tp = Path(self.templates_dir) / f"template_{template_id:04d}.png"
+                tmask = cv2.imread(str(tp), cv2.IMREAD_UNCHANGED)
+                if tmask is not None:
+                    if tmask.ndim == 3:
+                        tmask = tmask[..., 0]
+                    self._draw_debug_mask_panel(
+                        out,
+                        tmask,
+                        f"template_{template_id:04d}",
+                        top_left=(out.shape[1] - 230, 20),
+                        size=(220, 140),
+                    )
+
             if self.stn_enabled and self.template_homographies is not None:
                 if 0 <= template_id < len(self.template_homographies):
                     h_template = self.template_homographies[template_id]
@@ -350,6 +421,7 @@ def build_frame_processor(
     templates_dir: Path | None = None,
     stn_ckpt: Path | None = None,
     template_homographies_path: Path | None = None,
+    debug_retrieval: bool = False,
 ) -> Tuple[SportSpec, FrameProcessor]:
     """Build a sport-specific frame processor."""
     spec = get_sport_spec(sport)
@@ -366,4 +438,5 @@ def build_frame_processor(
         stn_ckpt_path=stn_ckpt,
         template_homographies_path=template_homographies_path,
         sport=sport,
+        debug_retrieval=debug_retrieval,
     )
