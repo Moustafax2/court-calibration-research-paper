@@ -3,6 +3,7 @@ seed: 42
 data:
   project_root: .
   manifest: data/annotations.jsonl
+  labels_index: data/labels/labels_index.jsonl
   sport: basketball
   split: train
 

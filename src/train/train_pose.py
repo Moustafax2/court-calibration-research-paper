@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any, Dict
 
@@ -15,6 +16,22 @@ def _resolve_from_root(root: Path, maybe_relative: str) -> Path:
     if p.is_absolute():
         return p.resolve()
     return (root / p).resolve()
+
+
+def _load_allowed_frame_paths(labels_index_path: Path, split: str) -> set[str]:
+    out: set[str] = set()
+    with labels_index_path.open("r", encoding="utf-8") as f:
+        for line in f:
+            t = line.strip()
+            if not t:
+                continue
+            row = json.loads(t)
+            if row.get("split") != split:
+                continue
+            fp = row.get("frame_path")
+            if isinstance(fp, str) and fp:
+                out.add(fp)
+    return out
 
 
 def train_pose(
@@ -36,12 +53,22 @@ def train_pose(
     manifest_path = _resolve_from_root(project_root, str(data_cfg["manifest"]))
     output_dir = _resolve_from_root(project_root, str(output_cfg.get("dir", "checkpoints/pose")))
     sport = str(data_cfg.get("sport", "basketball"))
+    split = str(data_cfg.get("split", "train"))
+    allowed_frame_paths: set[str] | None = None
+    labels_index_cfg = data_cfg.get("labels_index")
+    if labels_index_cfg:
+        labels_index_path = _resolve_from_root(project_root, str(labels_index_cfg))
+        allowed_frame_paths = _load_allowed_frame_paths(labels_index_path=labels_index_path, split=split)
+        if not allowed_frame_paths:
+            raise ValueError(
+                f"No frame paths found in labels_index={labels_index_path} for split={split}"
+            )
 
     summary = generate_pose_dictionary(
         manifest_path=manifest_path,
         sport=sport,
         output_dir=output_dir,
-        split=str(data_cfg.get("split", "train")),
+        split=split,
         template_size=(
             int(pose_cfg.get("template_width", 960)),
             int(pose_cfg.get("template_height", 540)),
@@ -60,6 +87,10 @@ def train_pose(
                 else None
             )
         ),
+        allowed_frame_paths=allowed_frame_paths,
     )
+    summary["labels_index_filter_used"] = bool(labels_index_cfg)
+    if labels_index_cfg:
+        summary["labels_index_path"] = str(_resolve_from_root(project_root, str(labels_index_cfg)))
     summary["config_path"] = str(Path(config_path).resolve())
     return summary

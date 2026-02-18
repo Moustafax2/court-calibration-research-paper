@@ -61,7 +61,11 @@ def pose_vector_to_homography(vec: np.ndarray) -> np.ndarray:
     return h
 
 
-def _load_manifest_rows(manifest_path: Path, split: str | None) -> List[Dict[str, Any]]:
+def _load_manifest_rows(
+    manifest_path: Path,
+    split: str | None,
+    allowed_frame_paths: set[str] | None = None,
+) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
     with manifest_path.open("r", encoding="utf-8") as f:
         for line in f:
@@ -71,6 +75,9 @@ def _load_manifest_rows(manifest_path: Path, split: str | None) -> List[Dict[str
             raw = json.loads(text)
             ann = FrameAnnotation.from_dict(raw)
             if split is not None and ann.split != split:
+                continue
+            frame_key = ann.frame_path.as_posix()
+            if allowed_frame_paths is not None and frame_key not in allowed_frame_paths:
                 continue
             rows.append(raw)
     if not rows:
@@ -150,6 +157,7 @@ def generate_pose_dictionary(
     posterior_threshold: float = 0.6,
     random_state: int = 42,
     max_samples: int | None = None,
+    allowed_frame_paths: set[str] | None = None,
 ) -> Dict[str, Any]:
     """Generate pose dictionary artifacts from annotated homographies."""
     manifest_path = Path(manifest_path).resolve()
@@ -158,7 +166,11 @@ def generate_pose_dictionary(
     templates_dir = output_dir / "templates"
     templates_dir.mkdir(parents=True, exist_ok=True)
 
-    rows = _load_manifest_rows(manifest_path=manifest_path, split=split)
+    rows = _load_manifest_rows(
+        manifest_path=manifest_path,
+        split=split,
+        allowed_frame_paths=allowed_frame_paths,
+    )
     rows = _sample_rows(rows=rows, max_samples=max_samples, random_state=random_state)
     vectors = []
     homographies = []
@@ -227,6 +239,9 @@ def generate_pose_dictionary(
         "split_used": split,
         "num_samples": int(len(rows)),
         "max_samples": int(max_samples) if max_samples is not None else None,
+        "allowed_frame_paths_count": (
+            int(len(allowed_frame_paths)) if allowed_frame_paths is not None else None
+        ),
         "num_components": int(gmm.n_components),
         "templates_written": int(written_templates),
         "assignments_path": str(assignments_path),
