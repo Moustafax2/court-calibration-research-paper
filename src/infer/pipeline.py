@@ -316,22 +316,6 @@ class SegmentationFrameProcessor(FrameProcessor):
             rel_vec = rel_vec * self.stn_target_std + self.stn_target_mean
         return self._pose_vector_to_h(rel_vec)
 
-    def _is_reasonable_outline(self, pts: np.ndarray, w: int, h: int) -> bool:
-        if not np.isfinite(pts).all():
-            return False
-        xs = pts[:, 0]
-        ys = pts[:, 1]
-        span_x = float(xs.max() - xs.min())
-        span_y = float(ys.max() - ys.min())
-        if span_x < 20 or span_y < 20:
-            return False
-        # allow some overflow, but reject extreme explosions
-        if xs.min() < -2 * w or xs.max() > 3 * w:
-            return False
-        if ys.min() < -2 * h or ys.max() > 3 * h:
-            return False
-        return True
-
     def _draw_court_outline(self, image: np.ndarray, h_final: np.ndarray) -> None:
         # Center-origin basketball dimensions.
         half_x, half_y = 14.351, 7.6454
@@ -340,8 +324,7 @@ class SegmentationFrameProcessor(FrameProcessor):
             dtype=np.float32,
         ).reshape(-1, 1, 2)
         warped = cv2.perspectiveTransform(outline, h_final).reshape(-1, 2)
-        if not self._is_reasonable_outline(warped, image.shape[1], image.shape[0]):
-            return
+        warped = np.nan_to_num(warped, nan=0.0, posinf=1e6, neginf=-1e6)
         pts = np.round(warped).astype(np.int32)
         cv2.polylines(image, [pts], isClosed=True, color=(255, 255, 0), thickness=2)
 
