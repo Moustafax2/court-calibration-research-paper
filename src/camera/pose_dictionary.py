@@ -225,7 +225,7 @@ def generate_pose_dictionary(
     low_fg_components_count = 0
     template_homographies: list[list[list[float]]] = []
 
-    def _render_mask_from_h(h_in: np.ndarray, frame_path: str | None = None) -> tuple[np.ndarray, float, np.ndarray]:
+    def _render_mask_from_h(h_in: np.ndarray, frame_path: str | None = None) -> tuple[np.ndarray, float]:
         h_render = np.asarray(h_in, dtype=np.float64)
         if frame_path is not None:
             fp = Path(frame_path)
@@ -246,7 +246,7 @@ def generate_pose_dictionary(
             regions=regions,
         )
         fg = float(np.mean(mask_local > 0))
-        return mask_local, fg, h_render
+        return mask_local, fg
 
     for k in range(gmm.n_components):
         mask: np.ndarray | None = None
@@ -254,12 +254,14 @@ def generate_pose_dictionary(
         h_k: np.ndarray
         if template_source == "mean":
             h_init = pose_vector_to_homography(gmm.means_[k])
-            mask, fg_ratio, h_k = _render_mask_from_h(h_init, frame_path=None)
+            h_k = np.asarray(h_init, dtype=np.float64)
+            mask, fg_ratio = _render_mask_from_h(h_k, frame_path=None)
         else:
             idxs = np.where(assignments == k)[0]
             if idxs.size == 0:
                 h_init = pose_vector_to_homography(gmm.means_[k])
-                mask, fg_ratio, h_k = _render_mask_from_h(h_init, frame_path=None)
+                h_k = np.asarray(h_init, dtype=np.float64)
+                mask, fg_ratio = _render_mask_from_h(h_k, frame_path=None)
             else:
                 mu = gmm.means_[k].reshape(1, -1)
                 cluster_vecs = vecs[idxs]
@@ -272,11 +274,11 @@ def generate_pose_dictionary(
                     rep_idx = int(idxs[int(jj)])
                     cand_h = homographies[rep_idx]
                     cand_frame = str(frame_paths[rep_idx])
-                    cand_mask, cand_fg, cand_h_render = _render_mask_from_h(cand_h, frame_path=cand_frame)
+                    cand_mask, cand_fg = _render_mask_from_h(cand_h, frame_path=cand_frame)
                     if cand_fg > best_fg:
                         best_fg = cand_fg
                         best_mask = cand_mask
-                        best_h = cand_h_render
+                        best_h = np.asarray(cand_h, dtype=np.float64)
                     if cand_fg >= float(min_template_fg_ratio):
                         break
                 assert best_mask is not None and best_h is not None
