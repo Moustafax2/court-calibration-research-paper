@@ -68,6 +68,7 @@ def train_pose(
         manifest_path=manifest_path,
         sport=sport,
         output_dir=output_dir,
+        project_root=project_root,
         split=split,
         template_size=(
             int(pose_cfg.get("template_width", 960)),
@@ -89,6 +90,7 @@ def train_pose(
         ),
         allowed_frame_paths=allowed_frame_paths,
         template_source=str(pose_cfg.get("template_source", "medoid")).lower(),
+        min_template_fg_ratio=float(pose_cfg.get("min_template_fg_ratio", 0.01)),
     )
     summary["labels_index_filter_used"] = bool(labels_index_cfg)
     if labels_index_cfg:

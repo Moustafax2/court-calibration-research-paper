@@ -11,6 +11,7 @@ pose:
   template_width: 960
   template_height: 540
   template_source: medoid
+  min_template_fg_ratio: 0.02
   max_samples: 250
   min_components: 120
   max_components: 260

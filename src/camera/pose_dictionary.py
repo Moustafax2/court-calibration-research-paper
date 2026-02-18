@@ -149,6 +149,7 @@ def generate_pose_dictionary(
     manifest_path: Path,
     sport: str,
     output_dir: Path,
+    project_root: Path = Path("."),
     split: str = "train",
     template_size: Tuple[int, int] = (960, 540),  # (W, H)
     min_components: int = 50,
@@ -159,10 +160,12 @@ def generate_pose_dictionary(
     max_samples: int | None = None,
     allowed_frame_paths: set[str] | None = None,
     template_source: str = "medoid",
+    min_template_fg_ratio: float = 0.01,
 ) -> Dict[str, Any]:
     """Generate pose dictionary artifacts from annotated homographies."""
     manifest_path = Path(manifest_path).resolve()
     output_dir = Path(output_dir).resolve()
+    project_root = Path(project_root).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     templates_dir = output_dir / "templates"
     templates_dir.mkdir(parents=True, exist_ok=True)
@@ -219,28 +222,71 @@ def generate_pose_dictionary(
     width, height = template_size
     written_templates = 0
     near_empty_templates = 0
+    low_fg_components_count = 0
     template_homographies: list[list[list[float]]] = []
+
+    def _render_mask_from_h(h_in: np.ndarray, frame_path: str | None = None) -> tuple[np.ndarray, float, np.ndarray]:
+        h_render = np.asarray(h_in, dtype=np.float64)
+        if frame_path is not None:
+            fp = Path(frame_path)
+            if not fp.is_absolute():
+                fp = (project_root / fp).resolve()
+            img = cv2.imread(str(fp), cv2.IMREAD_COLOR)
+            if img is not None:
+                src_h, src_w = img.shape[:2]
+                if src_w > 0 and src_h > 0:
+                    sx = float(width) / float(src_w)
+                    sy = float(height) / float(src_h)
+                    s = np.array([[sx, 0.0, 0.0], [0.0, sy, 0.0], [0.0, 0.0, 1.0]], dtype=np.float64)
+                    h_render = s @ h_render
+        mask_local = generate_semantic_mask(
+            image_height=height,
+            image_width=width,
+            homography_image_from_court=h_render,
+            regions=regions,
+        )
+        fg = float(np.mean(mask_local > 0))
+        return mask_local, fg, h_render
+
     for k in range(gmm.n_components):
+        mask: np.ndarray | None = None
+        fg_ratio = 0.0
+        h_k: np.ndarray
         if template_source == "mean":
-            h_k = pose_vector_to_homography(gmm.means_[k])
+            h_init = pose_vector_to_homography(gmm.means_[k])
+            mask, fg_ratio, h_k = _render_mask_from_h(h_init, frame_path=None)
         else:
             idxs = np.where(assignments == k)[0]
             if idxs.size == 0:
-                h_k = pose_vector_to_homography(gmm.means_[k])
+                h_init = pose_vector_to_homography(gmm.means_[k])
+                mask, fg_ratio, h_k = _render_mask_from_h(h_init, frame_path=None)
             else:
                 mu = gmm.means_[k].reshape(1, -1)
                 cluster_vecs = vecs[idxs]
                 d = np.linalg.norm(cluster_vecs - mu, axis=1)
-                rep_idx = int(idxs[int(np.argmin(d))])
-                h_k = homographies[rep_idx]
+                order = np.argsort(d)
+                best_mask = None
+                best_h = None
+                best_fg = -1.0
+                for jj in order:
+                    rep_idx = int(idxs[int(jj)])
+                    cand_h = homographies[rep_idx]
+                    cand_frame = str(frame_paths[rep_idx])
+                    cand_mask, cand_fg, cand_h_render = _render_mask_from_h(cand_h, frame_path=cand_frame)
+                    if cand_fg > best_fg:
+                        best_fg = cand_fg
+                        best_mask = cand_mask
+                        best_h = cand_h_render
+                    if cand_fg >= float(min_template_fg_ratio):
+                        break
+                assert best_mask is not None and best_h is not None
+                mask = best_mask
+                h_k = best_h
+                fg_ratio = float(best_fg)
+        if fg_ratio < float(min_template_fg_ratio):
+            low_fg_components_count += 1
 
-        mask = generate_semantic_mask(
-            image_height=height,
-            image_width=width,
-            homography_image_from_court=h_k,
-            regions=regions,
-        )
-        fg_ratio = float(np.mean(mask > 0))
+        assert mask is not None
         if fg_ratio < 0.005:
             near_empty_templates += 1
         out_path = templates_dir / f"template_{k:04d}.png"
@@ -262,9 +308,11 @@ def generate_pose_dictionary(
             int(len(allowed_frame_paths)) if allowed_frame_paths is not None else None
         ),
         "template_source": str(template_source),
+        "min_template_fg_ratio": float(min_template_fg_ratio),
         "num_components": int(gmm.n_components),
         "templates_written": int(written_templates),
         "near_empty_templates": int(near_empty_templates),
+        "low_fg_components_after_search": int(low_fg_components_count),
         "assignments_path": str(assignments_path),
         "dictionary_npz": str((output_dir / "pose_dictionary.npz")),
     }
