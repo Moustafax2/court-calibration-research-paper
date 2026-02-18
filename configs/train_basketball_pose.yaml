@@ -9,9 +9,9 @@ data:
 pose:
   template_width: 960
   template_height: 540
-  min_components: 50
-  max_components: 260
-  step: 10
+  min_components: 250
+  max_components: 400
+  step: 25
   posterior_threshold: 0.6
 
 output:
