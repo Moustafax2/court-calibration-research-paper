@@ -73,6 +73,7 @@ def train_retrieval(config_path: Path) -> Dict[str, Any]:
     templates_dir = _resolve_from_root(root, str(data_cfg["templates_dir"]))
     image_h = int(data_cfg.get("image_height", 256))
     image_w = int(data_cfg.get("image_width", 256))
+    num_classes = int(data_cfg.get("num_classes", 4))
 
     train_ds = PoseRetrievalPairDataset(
         labels_index_path=labels_index,
@@ -81,6 +82,9 @@ def train_retrieval(config_path: Path) -> Dict[str, Any]:
         split=str(data_cfg.get("train_split", "train")),
         project_root=root,
         image_size=(image_h, image_w),
+        num_classes=num_classes,
+        hard_negative_prob=float(data_cfg.get("hard_negative_prob", 0.6)),
+        augment_anchor_prob=float(data_cfg.get("augment_anchor_prob", 0.4)),
     )
 
     # Validation is optional (can be absent in assignments).
@@ -93,6 +97,9 @@ def train_retrieval(config_path: Path) -> Dict[str, Any]:
             split=str(data_cfg.get("val_split", "val")),
             project_root=root,
             image_size=(image_h, image_w),
+            num_classes=num_classes,
+            hard_negative_prob=0.0,
+            augment_anchor_prob=0.0,
         )
     except Exception:
         val_ds = None
@@ -122,7 +129,7 @@ def train_retrieval(config_path: Path) -> Dict[str, Any]:
     device = torch.device(device_name)
 
     model = SiameseRetrievalModel(
-        in_channels=int(model_cfg.get("in_channels", 1)),
+        in_channels=int(model_cfg.get("in_channels", num_classes)),
         embedding_dim=int(model_cfg.get("embedding_dim", 128)),
         base_channels=int(model_cfg.get("base_channels", 32)),
     ).to(device)

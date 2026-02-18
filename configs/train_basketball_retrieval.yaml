@@ -9,9 +9,12 @@ data:
   val_split: val
   image_height: 256
   image_width: 256
+  num_classes: 4
+  hard_negative_prob: 0.7
+  augment_anchor_prob: 0.5
 
 model:
-  in_channels: 1
+  in_channels: 4
   embedding_dim: 128
   base_channels: 32
 

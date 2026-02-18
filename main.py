@@ -98,6 +98,7 @@ def cmd_infer_video(args: argparse.Namespace) -> int:
         stn_ckpt=args.stn_ckpt,
         template_homographies=args.template_homographies,
         debug_retrieval=args.debug_retrieval,
+        retrieval_method=args.retrieval_method,
         overlay_alpha=args.overlay_alpha,
         device=args.device,
         max_frames=args.max_frames,
@@ -301,6 +302,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--debug-retrieval",
         action="store_true",
         help="Draw retrieval debug panels (pred mask, matched template, top-k distances).",
+    )
+    p_infer.add_argument(
+        "--retrieval-method",
+        type=str,
+        default="embedding",
+        choices=["embedding", "iou"],
+        help="Retrieval method for template matching.",
     )
     p_infer.add_argument(
         "--sport",

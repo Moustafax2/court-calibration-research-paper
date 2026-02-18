@@ -19,6 +19,7 @@ def run_video_pipeline(
     stn_ckpt: Path | None = None,
     template_homographies: Path | None = None,
     debug_retrieval: bool = False,
+    retrieval_method: str = "embedding",
     overlay_alpha: float = 0.45,
     device: str | None = None,
     max_frames: int | None = None,
@@ -32,6 +33,7 @@ def run_video_pipeline(
         stn_ckpt=stn_ckpt,
         template_homographies_path=template_homographies,
         debug_retrieval=debug_retrieval,
+        retrieval_method=retrieval_method,
         overlay_alpha=overlay_alpha,
         device=device,
     )

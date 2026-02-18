@@ -60,10 +60,16 @@ class PoseRetrievalPairDataset(Dataset):
         split: str,
         project_root: Path = Path("."),
         image_size: Tuple[int, int] = (256, 256),  # (H, W)
+        num_classes: int = 4,  # includes background class 0
+        hard_negative_prob: float = 0.6,
+        augment_anchor_prob: float = 0.4,
     ) -> None:
         self.project_root = Path(project_root).resolve()
         self.image_size = image_size
         self.templates_dir = Path(templates_dir).resolve()
+        self.num_classes = int(num_classes)
+        self.hard_negative_prob = float(np.clip(hard_negative_prob, 0.0, 1.0))
+        self.augment_anchor_prob = float(np.clip(augment_anchor_prob, 0.0, 1.0))
 
         labels_map = _load_labels_index(Path(labels_index_path).resolve(), split=split)
         assign_map = _load_assignments(Path(assignments_path).resolve(), split=split)
@@ -94,12 +100,16 @@ class PoseRetrievalPairDataset(Dataset):
             raise ValueError("No valid samples after filtering missing template ids.")
 
         self.rng = np.random.default_rng(42)
+        self.template_mask_cache: Dict[int, np.ndarray] = {
+            tid: self._read_mask_ids(self.templates_dir / f"template_{tid:04d}.png")
+            for tid in self.template_ids
+        }
 
     def __len__(self) -> int:
         # One positive and one negative for each anchor.
         return len(self.samples) * 2
 
-    def _read_mask(self, path: Path) -> np.ndarray:
+    def _read_mask_ids(self, path: Path) -> np.ndarray:
         m = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
         if m is None:
             raise FileNotFoundError(f"Could not read mask: {path}")
@@ -107,30 +117,81 @@ class PoseRetrievalPairDataset(Dataset):
             m = m[..., 0]
         h, w = self.image_size
         m = cv2.resize(m, (w, h), interpolation=cv2.INTER_NEAREST)
-        # Normalize class-id mask into [0,1] single channel.
-        m = m.astype(np.float32) / max(1.0, float(np.max(m)))
-        return m
+        return m.astype(np.uint8)
+
+    def _to_one_hot(self, mask_ids: np.ndarray) -> np.ndarray:
+        oh = np.zeros((self.num_classes, mask_ids.shape[0], mask_ids.shape[1]), dtype=np.float32)
+        for c in range(self.num_classes):
+            oh[c] = (mask_ids == c).astype(np.float32)
+        return oh
+
+    def _augment_anchor(self, mask_ids: np.ndarray) -> np.ndarray:
+        if self.rng.random() >= self.augment_anchor_prob:
+            return mask_ids
+        out = mask_ids.copy()
+        # Simple morphology perturbation on non-background mask.
+        fg = (out > 0).astype(np.uint8)
+        k = int(self.rng.integers(1, 3))
+        kernel = np.ones((2 * k + 1, 2 * k + 1), np.uint8)
+        if self.rng.random() < 0.5:
+            fg = cv2.dilate(fg, kernel, iterations=1)
+        else:
+            fg = cv2.erode(fg, kernel, iterations=1)
+        out = np.where(fg > 0, out, 0).astype(np.uint8)
+        return out
+
+    def _iou_multiclass(self, a: np.ndarray, b: np.ndarray) -> float:
+        # IoU over non-background classes; mean across present classes.
+        ious = []
+        for c in range(1, self.num_classes):
+            aa = a == c
+            bb = b == c
+            union = np.logical_or(aa, bb).sum()
+            if union == 0:
+                continue
+            inter = np.logical_and(aa, bb).sum()
+            ious.append(float(inter) / float(union))
+        if not ious:
+            return 0.0
+        return float(np.mean(ious))
+
+    def _sample_negative_tid(self, true_tid: int, anchor_ids: np.ndarray) -> int:
+        neg_choices = [tid for tid in self.template_ids if tid != true_tid]
+        if not neg_choices:
+            return true_tid
+        if self.rng.random() >= self.hard_negative_prob:
+            return int(self.rng.choice(neg_choices))
+
+        # Hard negative: choose most similar wrong template by IoU.
+        best_tid = neg_choices[0]
+        best_score = -1.0
+        for tid in neg_choices:
+            score = self._iou_multiclass(anchor_ids, self.template_mask_cache[tid])
+            if score > best_score:
+                best_score = score
+                best_tid = tid
+        return int(best_tid)
 
     def __getitem__(self, idx: int):
         anchor_idx = idx % len(self.samples)
         positive = (idx // len(self.samples)) == 0
         anchor_mask_path, true_tid = self.samples[anchor_idx]
+        anchor_ids = self._read_mask_ids(anchor_mask_path)
+        anchor_ids = self._augment_anchor(anchor_ids)
 
         if positive:
             template_tid = true_tid
             label = 1.0
         else:
-            # random negative template id
-            neg_choices = [tid for tid in self.template_ids if tid != true_tid]
-            template_tid = int(self.rng.choice(neg_choices)) if neg_choices else true_tid
+            template_tid = self._sample_negative_tid(true_tid=true_tid, anchor_ids=anchor_ids)
             label = 0.0
 
-        template_path = self.templates_dir / f"template_{template_tid:04d}.png"
-        anchor = self._read_mask(anchor_mask_path)
-        template = self._read_mask(template_path)
+        template_ids = self.template_mask_cache[template_tid]
+        anchor = self._to_one_hot(anchor_ids)
+        template = self._to_one_hot(template_ids)
 
-        # NCHW single-channel tensors
-        anchor_t = torch.from_numpy(anchor[None, ...]).float()
-        template_t = torch.from_numpy(template[None, ...]).float()
+        # CHW one-hot tensors
+        anchor_t = torch.from_numpy(anchor).float()
+        template_t = torch.from_numpy(template).float()
         label_t = torch.tensor(label, dtype=torch.float32)
         return anchor_t, template_t, label_t
