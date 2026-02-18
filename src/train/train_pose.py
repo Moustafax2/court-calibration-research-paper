@@ -88,6 +88,7 @@ def train_pose(
             )
         ),
         allowed_frame_paths=allowed_frame_paths,
+        template_source=str(pose_cfg.get("template_source", "medoid")).lower(),
     )
     summary["labels_index_filter_used"] = bool(labels_index_cfg)
     if labels_index_cfg:

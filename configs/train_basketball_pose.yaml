@@ -10,10 +10,11 @@ data:
 pose:
   template_width: 960
   template_height: 540
+  template_source: medoid
   max_samples: 250
-  min_components: 250
-  max_components: 400
-  step: 25
+  min_components: 120
+  max_components: 260
+  step: 20
   posterior_threshold: 0.6
 
 output:

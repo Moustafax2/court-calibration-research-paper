@@ -158,6 +158,7 @@ def generate_pose_dictionary(
     random_state: int = 42,
     max_samples: int | None = None,
     allowed_frame_paths: set[str] | None = None,
+    template_source: str = "medoid",
 ) -> Dict[str, Any]:
     """Generate pose dictionary artifacts from annotated homographies."""
     manifest_path = Path(manifest_path).resolve()
@@ -211,19 +212,37 @@ def generate_pose_dictionary(
             }
             f.write(json.dumps(out) + "\n")
 
-    # Generate one semantic template per component mean homography.
+    # Generate one semantic template per component.
+    # `medoid` uses the nearest real sample to each component mean, which avoids
+    # unrealistic templates from averaging homographies directly in vector space.
     regions = build_four_region_model_for_sport(sport)
     width, height = template_size
     written_templates = 0
+    near_empty_templates = 0
     template_homographies: list[list[list[float]]] = []
     for k in range(gmm.n_components):
-        h_k = pose_vector_to_homography(gmm.means_[k])
+        if template_source == "mean":
+            h_k = pose_vector_to_homography(gmm.means_[k])
+        else:
+            idxs = np.where(assignments == k)[0]
+            if idxs.size == 0:
+                h_k = pose_vector_to_homography(gmm.means_[k])
+            else:
+                mu = gmm.means_[k].reshape(1, -1)
+                cluster_vecs = vecs[idxs]
+                d = np.linalg.norm(cluster_vecs - mu, axis=1)
+                rep_idx = int(idxs[int(np.argmin(d))])
+                h_k = homographies[rep_idx]
+
         mask = generate_semantic_mask(
             image_height=height,
             image_width=width,
             homography_image_from_court=h_k,
             regions=regions,
         )
+        fg_ratio = float(np.mean(mask > 0))
+        if fg_ratio < 0.005:
+            near_empty_templates += 1
         out_path = templates_dir / f"template_{k:04d}.png"
         ok = cv2.imwrite(str(out_path), mask)
         if ok:
@@ -242,8 +261,10 @@ def generate_pose_dictionary(
         "allowed_frame_paths_count": (
             int(len(allowed_frame_paths)) if allowed_frame_paths is not None else None
         ),
+        "template_source": str(template_source),
         "num_components": int(gmm.n_components),
         "templates_written": int(written_templates),
+        "near_empty_templates": int(near_empty_templates),
         "assignments_path": str(assignments_path),
         "dictionary_npz": str((output_dir / "pose_dictionary.npz")),
     }
