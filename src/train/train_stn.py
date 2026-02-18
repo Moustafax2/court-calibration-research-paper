@@ -78,6 +78,7 @@ def train_stn(config_path: Path) -> Dict[str, Any]:
 
     image_h = int(data_cfg.get("image_height", 256))
     image_w = int(data_cfg.get("image_width", 256))
+    num_classes = int(data_cfg.get("num_classes", 4))
     train_split = str(data_cfg.get("train_split", "train"))
     val_split = str(data_cfg.get("val_split", "val"))
 
@@ -90,6 +91,7 @@ def train_stn(config_path: Path) -> Dict[str, Any]:
         split=train_split,
         project_root=root,
         image_size=(image_h, image_w),
+        num_classes=num_classes,
     )
     val_ds = None
     try:
@@ -102,6 +104,7 @@ def train_stn(config_path: Path) -> Dict[str, Any]:
             split=val_split,
             project_root=root,
             image_size=(image_h, image_w),
+            num_classes=num_classes,
         )
     except Exception:
         val_ds = None
@@ -131,7 +134,7 @@ def train_stn(config_path: Path) -> Dict[str, Any]:
     device = torch.device(device_name)
 
     model = STNHomographyRegressor(
-        in_channels=int(model_cfg.get("in_channels", 2)),
+        in_channels=int(model_cfg.get("in_channels", num_classes * 2)),
         base_channels=int(model_cfg.get("base_channels", 32)),
     ).to(device)
     loss_name = str(train_cfg.get("loss", "smooth_l1")).lower()

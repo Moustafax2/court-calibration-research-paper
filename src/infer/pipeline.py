@@ -158,6 +158,7 @@ class SegmentationFrameProcessor(FrameProcessor):
         self.stn_model = None
         self.stn_input_h = self.input_h
         self.stn_input_w = self.input_w
+        self.stn_in_channels = 2
         self.template_homographies = None
         self.stn_target_mean = None
         self.stn_target_std = None
@@ -175,8 +176,9 @@ class SegmentationFrameProcessor(FrameProcessor):
                 s_data_cfg = s_cfg.get("data", {})
                 self.stn_input_h = int(s_data_cfg.get("image_height", self.input_h))
                 self.stn_input_w = int(s_data_cfg.get("image_width", self.input_w))
+                self.stn_in_channels = int(s_model_cfg.get("in_channels", 2))
                 self.stn_model = STNHomographyRegressor(
-                    in_channels=int(s_model_cfg.get("in_channels", 2)),
+                    in_channels=self.stn_in_channels,
                     base_channels=int(s_model_cfg.get("base_channels", 32)),
                 ).to(self.device)
                 self.stn_model.load_state_dict(s_ckpt["model_state_dict"])
@@ -304,11 +306,24 @@ class SegmentationFrameProcessor(FrameProcessor):
         if tmask.ndim == 3:
             tmask = tmask[..., 0]
 
-        a = cv2.resize(mask_pred, (self.stn_input_w, self.stn_input_h), interpolation=cv2.INTER_NEAREST).astype(np.float32)
-        b = cv2.resize(tmask, (self.stn_input_w, self.stn_input_h), interpolation=cv2.INTER_NEAREST).astype(np.float32)
-        a /= max(1.0, float(np.max(a)))
-        b /= max(1.0, float(np.max(b)))
-        x = np.stack([a, b], axis=0)[None, ...]  # NCHW
+        a_ids = cv2.resize(
+            mask_pred, (self.stn_input_w, self.stn_input_h), interpolation=cv2.INTER_NEAREST
+        ).astype(np.uint8)
+        b_ids = cv2.resize(
+            tmask, (self.stn_input_w, self.stn_input_h), interpolation=cv2.INTER_NEAREST
+        ).astype(np.uint8)
+        if self.stn_in_channels <= 2:
+            # Backward compatibility for old 2-channel STN checkpoints.
+            a = a_ids.astype(np.float32)
+            b = b_ids.astype(np.float32)
+            a /= max(1.0, float(np.max(a)))
+            b /= max(1.0, float(np.max(b)))
+            x = np.stack([a, b], axis=0)[None, ...]  # NCHW
+        else:
+            num_classes = max(2, self.stn_in_channels // 2)
+            a_oh = self._mask_to_one_hot(a_ids, num_classes=num_classes)
+            b_oh = self._mask_to_one_hot(b_ids, num_classes=num_classes)
+            x = np.concatenate([a_oh, b_oh], axis=0)[None, ...]  # NCHW
         x_t = torch.from_numpy(x).float().to(self.device)
         with torch.no_grad():
             rel_vec = self.stn_model(x_t).squeeze(0).cpu().numpy()
@@ -450,8 +465,10 @@ class SegmentationFrameProcessor(FrameProcessor):
             if self.stn_enabled and self.template_homographies is not None:
                 if 0 <= template_id < len(self.template_homographies):
                     h_template = self.template_homographies[template_id]
+                    metadata["homography_pred"] = json.dumps(h_template.tolist())
                     h_rel = self._predict_relative_h(mask, template_id)
                     h_final = h_rel @ h_template
+                    metadata["homography_pred"] = json.dumps(h_final.tolist())
                     self._draw_court_outline(out, h_final)
                     metadata["mode"] = "segmentation+retrieval+stn"
         return FrameProcessorResult(frame_out=out, metadata=metadata)

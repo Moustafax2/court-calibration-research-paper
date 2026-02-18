@@ -11,9 +11,10 @@ data:
   val_split: val
   image_height: 256
   image_width: 256
+  num_classes: 4
 
 model:
-  in_channels: 2
+  in_channels: 8
   base_channels: 32
 
 train:

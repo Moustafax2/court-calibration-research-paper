@@ -31,7 +31,11 @@ def cmd_train_pose(args: argparse.Namespace) -> int:
         print("Install requirements first: pip install -r requirements.txt")
         return 2
 
-    summary = train_pose(args.config)
+    summary = train_pose(
+        args.config,
+        max_samples=args.max_samples,
+        sample_seed=args.sample_seed,
+    )
     print("[train-pose] completed")
     for key, value in summary.items():
         print(f"  {key}: {value}")
@@ -75,8 +79,28 @@ def cmd_train_e2e(args: argparse.Namespace) -> int:
 
 
 def cmd_eval(args: argparse.Namespace) -> int:
-    print(f"[eval] config={args.config} ckpt={args.ckpt}")
-    print("Not implemented yet.")
+    try:
+        from src.eval.run_eval import evaluate_calibration
+    except ModuleNotFoundError as exc:
+        print(f"[eval] missing dependency: {exc}")
+        print("Install requirements first: pip install -r requirements.txt")
+        return 2
+
+    summary = evaluate_calibration(
+        config_path=args.config,
+        ckpt=args.ckpt,
+        retrieval_ckpt=args.retrieval_ckpt,
+        templates_dir=args.templates_dir,
+        stn_ckpt=args.stn_ckpt,
+        template_homographies=args.template_homographies,
+        sport=args.sport,
+        device=args.device,
+        retrieval_method=args.retrieval_method,
+        max_samples=args.max_samples,
+    )
+    print("[eval] completed")
+    for key, value in summary.items():
+        print(f"  {key}: {value}")
     return 0
 
 
@@ -193,6 +217,28 @@ def cmd_visualize_label(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_visualize_templates(args: argparse.Namespace) -> int:
+    try:
+        from src.data.visualize_templates import visualize_templates_grid
+    except ModuleNotFoundError as exc:
+        print(f"[visualize-templates] missing dependency: {exc}")
+        print("Install requirements first: pip install -r requirements.txt")
+        return 2
+
+    summary = visualize_templates_grid(
+        templates_dir=args.templates_dir,
+        output_path=args.output,
+        max_templates=args.max_templates,
+        cols=args.cols,
+        tile_width=args.tile_width,
+        tile_height=args.tile_height,
+    )
+    print("[visualize-templates] saved")
+    for key, value in summary.items():
+        print(f"  {key}: {value}")
+    return 0
+
+
 def cmd_import_yolo(args: argparse.Namespace) -> int:
     try:
         from src.data.import_yolo import import_yolo_keypoints_to_manifest
@@ -244,6 +290,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_train_pose = subparsers.add_parser("train-pose", help="Train siamese pose model")
     _add_common_config_arg(p_train_pose)
+    p_train_pose.add_argument(
+        "--max-samples",
+        type=int,
+        default=None,
+        help="Optional cap for number of training images used to build pose dictionary.",
+    )
+    p_train_pose.add_argument(
+        "--sample-seed",
+        type=int,
+        default=None,
+        help="Random seed used for pose sampling override.",
+    )
     p_train_pose.set_defaults(func=cmd_train_pose)
 
     p_train_stn = subparsers.add_parser("train-stn", help="Train STN refinement model")
@@ -263,6 +321,57 @@ def build_parser() -> argparse.ArgumentParser:
     p_eval = subparsers.add_parser("eval", help="Evaluate checkpoint")
     _add_common_config_arg(p_eval)
     p_eval.add_argument("--ckpt", type=Path, required=True, help="Checkpoint path")
+    p_eval.add_argument(
+        "--retrieval-ckpt",
+        type=Path,
+        default=None,
+        help="Retrieval checkpoint path (optional).",
+    )
+    p_eval.add_argument(
+        "--templates-dir",
+        type=Path,
+        default=None,
+        help="Pose template directory (optional, required for retrieval-based eval).",
+    )
+    p_eval.add_argument(
+        "--stn-ckpt",
+        type=Path,
+        default=None,
+        help="STN checkpoint path (optional, requires retrieval + template homographies).",
+    )
+    p_eval.add_argument(
+        "--template-homographies",
+        type=Path,
+        default=None,
+        help="Path to template_homographies.json (optional, used by STN refinement).",
+    )
+    p_eval.add_argument(
+        "--retrieval-method",
+        type=str,
+        default="embedding",
+        choices=["embedding", "iou"],
+        help="Retrieval method for template matching.",
+    )
+    p_eval.add_argument(
+        "--sport",
+        type=str,
+        default="basketball",
+        choices=supported_sports(),
+        help="Sport mode",
+    )
+    p_eval.add_argument(
+        "--device",
+        type=str,
+        default=None,
+        choices=["cpu", "cuda"],
+        help="Device override. Default auto-select.",
+    )
+    p_eval.add_argument(
+        "--max-samples",
+        type=int,
+        default=None,
+        help="Optional cap for number of eval frames.",
+    )
     p_eval.set_defaults(func=cmd_eval)
 
     p_infer = subparsers.add_parser("infer-video", help="Run video inference")
@@ -489,6 +598,48 @@ def build_parser() -> argparse.ArgumentParser:
         help="Disable center divider line.",
     )
     p_vis.set_defaults(func=cmd_visualize_label)
+
+    p_vis_templates = subparsers.add_parser(
+        "visualize-templates",
+        help="Render a grid preview of template_*.png masks",
+    )
+    p_vis_templates.add_argument(
+        "--templates-dir",
+        type=Path,
+        required=True,
+        help="Directory containing template_*.png files.",
+    )
+    p_vis_templates.add_argument(
+        "--output",
+        type=Path,
+        default=Path("outputs/template_grid.jpg"),
+        help="Output image path.",
+    )
+    p_vis_templates.add_argument(
+        "--max-templates",
+        type=int,
+        default=100,
+        help="Maximum number of templates to show.",
+    )
+    p_vis_templates.add_argument(
+        "--cols",
+        type=int,
+        default=10,
+        help="Number of columns in the output grid.",
+    )
+    p_vis_templates.add_argument(
+        "--tile-width",
+        type=int,
+        default=220,
+        help="Width of each template tile in pixels.",
+    )
+    p_vis_templates.add_argument(
+        "--tile-height",
+        type=int,
+        default=124,
+        help="Height of each template tile in pixels.",
+    )
+    p_vis_templates.set_defaults(func=cmd_visualize_templates)
 
     p_imp = subparsers.add_parser(
         "import-yolo",

@@ -17,9 +17,15 @@ def _resolve_from_root(root: Path, maybe_relative: str) -> Path:
     return (root / p).resolve()
 
 
-def train_pose(config_path: Path) -> Dict[str, Any]:
+def train_pose(
+    config_path: Path,
+    max_samples: int | None = None,
+    sample_seed: int | None = None,
+) -> Dict[str, Any]:
     cfg = load_yaml_config(config_path)
     seed = int(cfg.get("seed", 42))
+    if sample_seed is not None:
+        seed = int(sample_seed)
     set_global_seed(seed)
 
     data_cfg = cfg.get("data", {})
@@ -45,6 +51,15 @@ def train_pose(config_path: Path) -> Dict[str, Any]:
         step=int(pose_cfg.get("step", 10)),
         posterior_threshold=float(pose_cfg.get("posterior_threshold", 0.6)),
         random_state=seed,
+        max_samples=(
+            int(max_samples)
+            if max_samples is not None
+            else (
+                int(pose_cfg["max_samples"])
+                if "max_samples" in pose_cfg and pose_cfg["max_samples"] is not None
+                else None
+            )
+        ),
     )
     summary["config_path"] = str(Path(config_path).resolve())
     return summary

@@ -49,10 +49,12 @@ class STNHomographyDataset(Dataset):
         split: str,
         project_root: Path = Path("."),
         image_size: Tuple[int, int] = (256, 256),  # (H,W)
+        num_classes: int = 4,
     ) -> None:
         self.root = Path(project_root).resolve()
         self.image_size = image_size
         self.templates_dir = Path(templates_dir).resolve()
+        self.num_classes = int(num_classes)
 
         labels_rows = _load_jsonl(Path(labels_index_path).resolve())
         labels_map: Dict[str, str] = {
@@ -98,7 +100,7 @@ class STNHomographyDataset(Dataset):
     def __len__(self) -> int:
         return len(self.samples)
 
-    def _read_mask(self, path: Path) -> np.ndarray:
+    def _read_mask_ids(self, path: Path) -> np.ndarray:
         m = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
         if m is None:
             raise FileNotFoundError(f"Could not read mask: {path}")
@@ -106,17 +108,23 @@ class STNHomographyDataset(Dataset):
             m = m[..., 0]
         h, w = self.image_size
         m = cv2.resize(m, (w, h), interpolation=cv2.INTER_NEAREST)
-        m = m.astype(np.float32)
-        m /= max(1.0, float(np.max(m)))
-        return m
+        return m.astype(np.uint8)
+
+    def _to_one_hot(self, mask_ids: np.ndarray) -> np.ndarray:
+        out = np.zeros((self.num_classes, mask_ids.shape[0], mask_ids.shape[1]), dtype=np.float32)
+        for c in range(self.num_classes):
+            out[c] = (mask_ids == c).astype(np.float32)
+        return out
 
     def __getitem__(self, idx: int):
         anchor_path, tid, y = self.samples[idx]
         template_path = self.templates_dir / f"template_{tid:04d}.png"
-        anchor = self._read_mask(anchor_path)
-        template = self._read_mask(template_path)
+        anchor_ids = self._read_mask_ids(anchor_path)
+        template_ids = self._read_mask_ids(template_path)
+        anchor = self._to_one_hot(anchor_ids)
+        template = self._to_one_hot(template_ids)
 
-        x = np.stack([anchor, template], axis=0).astype(np.float32)
+        x = np.concatenate([anchor, template], axis=0).astype(np.float32)
         x_t = torch.from_numpy(x).float()
         y_t = torch.from_numpy(y).float()
         return x_t, y_t

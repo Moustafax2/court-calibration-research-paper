@@ -78,6 +78,24 @@ def _load_manifest_rows(manifest_path: Path, split: str | None) -> List[Dict[str
     return rows
 
 
+def _sample_rows(
+    rows: List[Dict[str, Any]],
+    max_samples: int | None,
+    random_state: int,
+) -> List[Dict[str, Any]]:
+    if max_samples is None:
+        return rows
+    k = int(max_samples)
+    if k <= 0:
+        raise ValueError("max_samples must be > 0 when provided.")
+    if k >= len(rows):
+        return rows
+    rng = np.random.default_rng(int(random_state))
+    idx = rng.choice(len(rows), size=k, replace=False)
+    idx = np.sort(idx)
+    return [rows[int(i)] for i in idx]
+
+
 def _coverage_from_posterior(prob: np.ndarray, threshold: float) -> float:
     if prob.size == 0:
         return 0.0
@@ -131,6 +149,7 @@ def generate_pose_dictionary(
     step: int = 10,
     posterior_threshold: float = 0.6,
     random_state: int = 42,
+    max_samples: int | None = None,
 ) -> Dict[str, Any]:
     """Generate pose dictionary artifacts from annotated homographies."""
     manifest_path = Path(manifest_path).resolve()
@@ -140,6 +159,7 @@ def generate_pose_dictionary(
     templates_dir.mkdir(parents=True, exist_ok=True)
 
     rows = _load_manifest_rows(manifest_path=manifest_path, split=split)
+    rows = _sample_rows(rows=rows, max_samples=max_samples, random_state=random_state)
     vectors = []
     homographies = []
     frame_paths = []
@@ -206,6 +226,7 @@ def generate_pose_dictionary(
         "output_dir": str(output_dir),
         "split_used": split,
         "num_samples": int(len(rows)),
+        "max_samples": int(max_samples) if max_samples is not None else None,
         "num_components": int(gmm.n_components),
         "templates_written": int(written_templates),
         "assignments_path": str(assignments_path),

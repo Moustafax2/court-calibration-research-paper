@@ -1,0 +1,9 @@
+data:
+  project_root: .
+  manifest: data/annotations.jsonl
+  split: val
+  assignments: checkpoints/pose/template_assignments.jsonl
+
+eval:
+  runtime_warmup: 5
+
