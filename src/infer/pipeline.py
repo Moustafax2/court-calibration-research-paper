@@ -135,6 +135,8 @@ class SegmentationFrameProcessor(FrameProcessor):
         self.stn_input_h = self.input_h
         self.stn_input_w = self.input_w
         self.template_homographies = None
+        self.stn_target_mean = None
+        self.stn_target_std = None
         if (
             stn_ckpt_path is not None
             and template_homographies_path is not None
@@ -155,6 +157,11 @@ class SegmentationFrameProcessor(FrameProcessor):
                 ).to(self.device)
                 self.stn_model.load_state_dict(s_ckpt["model_state_dict"])
                 self.stn_model.eval()
+                t_mean = s_ckpt.get("target_mean")
+                t_std = s_ckpt.get("target_std")
+                if t_mean is not None and t_std is not None:
+                    self.stn_target_mean = np.asarray(t_mean, dtype=np.float32)
+                    self.stn_target_std = np.asarray(t_std, dtype=np.float32)
 
                 with template_homographies_path.open("r", encoding="utf-8") as f:
                     mats = json.load(f)
@@ -233,7 +240,25 @@ class SegmentationFrameProcessor(FrameProcessor):
         x_t = torch.from_numpy(x).float().to(self.device)
         with torch.no_grad():
             rel_vec = self.stn_model(x_t).squeeze(0).cpu().numpy()
+        if self.stn_target_mean is not None and self.stn_target_std is not None:
+            rel_vec = rel_vec * self.stn_target_std + self.stn_target_mean
         return self._pose_vector_to_h(rel_vec)
+
+    def _is_reasonable_outline(self, pts: np.ndarray, w: int, h: int) -> bool:
+        if not np.isfinite(pts).all():
+            return False
+        xs = pts[:, 0]
+        ys = pts[:, 1]
+        span_x = float(xs.max() - xs.min())
+        span_y = float(ys.max() - ys.min())
+        if span_x < 20 or span_y < 20:
+            return False
+        # allow some overflow, but reject extreme explosions
+        if xs.min() < -2 * w or xs.max() > 3 * w:
+            return False
+        if ys.min() < -2 * h or ys.max() > 3 * h:
+            return False
+        return True
 
     def _draw_court_outline(self, image: np.ndarray, h_final: np.ndarray) -> None:
         # Center-origin basketball dimensions.
@@ -243,6 +268,8 @@ class SegmentationFrameProcessor(FrameProcessor):
             dtype=np.float32,
         ).reshape(-1, 1, 2)
         warped = cv2.perspectiveTransform(outline, h_final).reshape(-1, 2)
+        if not self._is_reasonable_outline(warped, image.shape[1], image.shape[0]):
+            return
         pts = np.round(warped).astype(np.int32)
         cv2.polylines(image, [pts], isClosed=True, color=(255, 255, 0), thickness=2)
 

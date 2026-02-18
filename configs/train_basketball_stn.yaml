@@ -22,5 +22,9 @@ train:
   num_workers: 2
   learning_rate: 0.001
   weight_decay: 0.0
+  loss: smooth_l1
+  huber_beta: 1.0
+  normalize_targets: true
+  target_std_floor: 0.001
   epochs: 20
   checkpoint_dir: checkpoints/stn

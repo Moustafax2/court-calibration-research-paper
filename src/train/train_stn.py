@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict
 
+import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -34,6 +35,8 @@ def _run_epoch(
     criterion: nn.Module,
     optimizer: torch.optim.Optimizer | None,
     device: torch.device,
+    target_mean: torch.Tensor | None = None,
+    target_std: torch.Tensor | None = None,
 ) -> float:
     train = optimizer is not None
     model.train(train)
@@ -42,6 +45,8 @@ def _run_epoch(
     for x, y in tqdm(loader, leave=False):
         x = x.to(device, non_blocking=True)
         y = y.to(device, non_blocking=True)
+        if target_mean is not None and target_std is not None:
+            y = (y - target_mean) / target_std
         if train:
             optimizer.zero_grad(set_to_none=True)
         pred = model(x)
@@ -129,12 +134,29 @@ def train_stn(config_path: Path) -> Dict[str, Any]:
         in_channels=int(model_cfg.get("in_channels", 2)),
         base_channels=int(model_cfg.get("base_channels", 32)),
     ).to(device)
-    criterion = nn.MSELoss()
+    loss_name = str(train_cfg.get("loss", "smooth_l1")).lower()
+    if loss_name == "mse":
+        criterion = nn.MSELoss()
+    else:
+        criterion = nn.SmoothL1Loss(beta=float(train_cfg.get("huber_beta", 1.0)))
     optimizer = torch.optim.Adam(
         model.parameters(),
         lr=float(train_cfg.get("learning_rate", 1e-3)),
         weight_decay=float(train_cfg.get("weight_decay", 0.0)),
     )
+
+    normalize_targets = bool(train_cfg.get("normalize_targets", True))
+    target_mean_t: torch.Tensor | None = None
+    target_std_t: torch.Tensor | None = None
+    target_mean_np = None
+    target_std_np = None
+    if normalize_targets:
+        y_train = train_ds.get_targets_array()
+        target_mean_np = y_train.mean(axis=0).astype("float32")
+        std_floor = float(train_cfg.get("target_std_floor", 1e-3))
+        target_std_np = np.maximum(y_train.std(axis=0).astype("float32"), std_floor)
+        target_mean_t = torch.from_numpy(target_mean_np).to(device)
+        target_std_t = torch.from_numpy(target_std_np).to(device)
 
     epochs = int(train_cfg.get("epochs", 20))
     ckpt_dir = _resolve(root, str(train_cfg.get("checkpoint_dir", "checkpoints/stn")))
@@ -149,8 +171,28 @@ def train_stn(config_path: Path) -> Dict[str, Any]:
     history = []
 
     for epoch in range(1, epochs + 1):
-        train_loss = _run_epoch(model, train_loader, criterion, optimizer, device)
-        val_loss = _run_epoch(model, val_loader, criterion, None, device) if val_loader else train_loss
+        train_loss = _run_epoch(
+            model,
+            train_loader,
+            criterion,
+            optimizer,
+            device,
+            target_mean=target_mean_t,
+            target_std=target_std_t,
+        )
+        val_loss = (
+            _run_epoch(
+                model,
+                val_loader,
+                criterion,
+                None,
+                device,
+                target_mean=target_mean_t,
+                target_std=target_std_t,
+            )
+            if val_loader
+            else train_loss
+        )
         print(
             f"[train-stn] epoch={epoch:03d}/{epochs} "
             f"train_loss={train_loss:.6f} val_loss={val_loss:.6f}"
@@ -163,6 +205,9 @@ def train_stn(config_path: Path) -> Dict[str, Any]:
             "optimizer_state_dict": optimizer.state_dict(),
             "val_loss": val_loss,
             "config": cfg,
+            "target_mean": target_mean_np.tolist() if target_mean_np is not None else None,
+            "target_std": target_std_np.tolist() if target_std_np is not None else None,
+            "normalize_targets": normalize_targets,
         }
         torch.save(state, last_path)
         if val_loss < best_val:

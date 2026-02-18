@@ -80,13 +80,18 @@ class STNHomographyDataset(Dataset):
             raise ValueError(f"No overlapping rows for split={split} in STN dataset inputs.")
 
         self.samples: List[Tuple[Path, int, np.ndarray]] = []
+        self.targets: List[np.ndarray] = []
         for frame_path in common:
             mask_path = _resolve(self.root, Path(labels_map[frame_path]))
             tid = int(assign_map[frame_path])
             if tid < 0 or tid >= len(self.template_h):
                 continue
             h_gt = hom_map[frame_path]
-            self.samples.append((mask_path, tid, h_gt))
+            h_template = self.template_h[tid]
+            h_rel = h_gt @ np.linalg.inv(h_template)
+            y = homography_to_pose_vector(h_rel).astype(np.float32)
+            self.samples.append((mask_path, tid, y))
+            self.targets.append(y)
         if not self.samples:
             raise ValueError("No valid STN samples after filtering.")
 
@@ -106,16 +111,15 @@ class STNHomographyDataset(Dataset):
         return m
 
     def __getitem__(self, idx: int):
-        anchor_path, tid, h_gt = self.samples[idx]
+        anchor_path, tid, y = self.samples[idx]
         template_path = self.templates_dir / f"template_{tid:04d}.png"
         anchor = self._read_mask(anchor_path)
         template = self._read_mask(template_path)
-
-        h_template = self.template_h[tid]
-        h_rel = h_gt @ np.linalg.inv(h_template)
-        y = homography_to_pose_vector(h_rel).astype(np.float32)
 
         x = np.stack([anchor, template], axis=0).astype(np.float32)
         x_t = torch.from_numpy(x).float()
         y_t = torch.from_numpy(y).float()
         return x_t, y_t
+
+    def get_targets_array(self) -> np.ndarray:
+        return np.asarray(self.targets, dtype=np.float32)
